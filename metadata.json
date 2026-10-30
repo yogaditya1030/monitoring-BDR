@@ -1,0 +1,8 @@
+{
+  "name": "Remix Monitoring Permohonan BDR",
+  "description": "Monitoring Permohonan",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
