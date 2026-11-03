@@ -7,14 +7,28 @@ import { QuickIntakeModal } from './components/QuickIntakeModal';
 import { DepartmentWorkflowModal } from './components/DepartmentWorkflowModal';
 import { GoogleSheetsIntegrationModal } from './components/GoogleSheetsIntegrationModal';
 import { PermohonanDetailModal } from './components/PermohonanDetailModal';
+import { AiReportChatbotModal } from './components/AiReportChatbotModal';
 import {
   initAuth,
   appendRowToGoogleSheet,
   syncAllRecordsToGoogleSheet,
 } from './services/googleSheetsService';
-import { CheckCircle2, AlertCircle, Bell } from 'lucide-react';
+import {
+  buildTeknikWaNotification,
+  TeknikWaNotificationPayload,
+} from './utils/plnValidation';
+import {
+  CheckCircle2,
+  AlertCircle,
+  Send,
+  Phone,
+  MapPin,
+  Copy,
+  ExternalLink,
+  X,
+} from 'lucide-react';
 
-const STORAGE_KEY = 'PLN_PBPD_PFK_RECORDS_V1';
+const STORAGE_KEY = 'PLN_PBPD_PFK_RECORDS_V4';
 
 export default function App() {
   const [records, setRecords] = useState<PermohonanItem[]>(() => {
@@ -22,7 +36,28 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((r: any) => ({
+            ...r,
+            status:
+              r.status === 'SURVEI/RAB'
+                ? r.rab && r.rab > 0
+                  ? 'RAB'
+                  : 'SURVEI'
+                : r.status,
+            keteranganStatus:
+              typeof r.keteranganStatus === 'string'
+                ? r.keteranganStatus.replace(/Jalur\s+(Kilat|Cepat)\s*/gi, 'Permohonan ')
+                : r.keteranganStatus,
+            historyLogs: Array.isArray(r.historyLogs)
+              ? r.historyLogs.map((log: any) => ({
+                  ...log,
+                  action: typeof log.action === 'string' ? log.action.replace(/Jalur\s+(Kilat|Cepat)\s*/gi, '') : log.action,
+                  notes: typeof log.notes === 'string' ? log.notes.replace(/Jalur\s+(Kilat|Cepat)\s*/gi, '') : log.notes,
+                }))
+              : [],
+          }));
+        }
       }
     } catch (e) {
       console.warn('Failed to load records from storage, using initial data', e);
@@ -35,6 +70,12 @@ export default function App() {
   const [selectedRecordForWorkflow, setSelectedRecordForWorkflow] = useState<PermohonanItem | null>(null);
   const [isQuickIntakeOpen, setIsQuickIntakeOpen] = useState(false);
   const [isGoogleSheetsOpen, setIsGoogleSheetsOpen] = useState(false);
+  const [isAiChatbotOpen, setIsAiChatbotOpen] = useState(false);
+  const [activeWaNotification, setActiveWaNotification] = useState<{
+    record: PermohonanItem;
+    payload: TeknikWaNotificationPayload;
+  } | null>(null);
+  const [waCopied, setWaCopied] = useState(false);
 
   // Google Sheets state
   const [sheetsState, setSheetsState] = useState<GoogleSheetSyncState>({
@@ -92,16 +133,32 @@ export default function App() {
   }, []);
 
   // Handle new record creation from Quick Intake
-  const handleAddNewRecord = async (newRecord: PermohonanItem, shouldSyncToSheet: boolean) => {
+  const handleAddNewRecord = async (
+    newRecord: PermohonanItem,
+    shouldSyncToSheet: boolean,
+    waOptions?: { sendToTeknik: boolean; teknikPhone: string }
+  ) => {
     setRecords((prev) => [newRecord, ...prev]);
 
     const isPfk = newRecord.transaksi === 'PFK';
     showToast(
       isPfk
-        ? `⚡ Permohonan PFK "${newRecord.projectName}" berhasil dibuat & langsung terhubung ke Tim Teknik!`
-        : `Permohonan ${newRecord.transaksi} "${newRecord.projectName}" berhasil didaftarkan (Tahap Verifikasi PP).`,
+        ? `⚡ Permohonan PFK "${newRecord.projectName}" berhasil dibuat & notifikasi WA disiapkan untuk Tim Teknik!`
+        : `Permohonan ${newRecord.transaksi} "${newRecord.projectName}" berhasil didaftarkan & notifikasi WA Tim Teknik siap dikirim.`,
       isPfk ? 'info' : 'success'
     );
+
+    if (waOptions?.sendToTeknik !== false) {
+      const payload = buildTeknikWaNotification(
+        newRecord,
+        waOptions?.teknikPhone || '08112500123'
+      );
+      setWaCopied(false);
+      setActiveWaNotification({
+        record: newRecord,
+        payload,
+      });
+    }
 
     // Auto-sync row to Google Sheets if connected and requested
     if (shouldSyncToSheet && sheetsState.isConnected && sheetsState.spreadsheetId) {
@@ -162,11 +219,12 @@ export default function App() {
   };
 
   const pendingPfkCount = records.filter(
-    (r) => r.transaksi === 'PFK' && r.status === 'SURVEI/RAB'
+    (r) => r.transaksi === 'PFK' && (r.status === 'SURVEI' || r.status === 'RAB')
   ).length;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
+
       {/* Top Notification Toast */}
       {toast && (
         <div className="fixed top-4 right-4 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
@@ -195,6 +253,7 @@ export default function App() {
         onRoleChange={setCurrentRole}
         onOpenQuickIntake={() => setIsQuickIntakeOpen(true)}
         onOpenGoogleSheets={() => setIsGoogleSheetsOpen(true)}
+        onOpenAiChatbot={() => setIsAiChatbotOpen(true)}
         sheetsState={sheetsState}
         onTriggerSync={handleTriggerSync}
         totalRecords={records.length}
@@ -202,7 +261,7 @@ export default function App() {
       />
 
       {/* Main Content Area */}
-      <main className="w-full px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 py-6 flex-1">
+      <main className="w-full px-3 sm:px-6 lg:px-8 xl:px-10 py-4 sm:py-5 flex-1">
         <DashboardOverview
           records={records}
           currentRole={currentRole}
@@ -220,7 +279,7 @@ export default function App() {
             © {new Date().getFullYear()} PT PLN (Persero) ULP Borobudur, UP3 Magelang, UID Jawa Tengah • Sistem Monitoring PBPD & PFK
           </span>
           <span className="flex items-center gap-2 text-[11px] text-slate-400">
-            Terintegrasi dengan Google Sheets API • K3L • Teknik • TE • PP
+            Terintegrasi dengan Google Sheets API • AI Report Generator • K3L • Teknik • TE • PP
           </span>
         </div>
       </footer>
@@ -260,6 +319,141 @@ export default function App() {
         onUpdateState={(next) => setSheetsState((prev) => ({ ...prev, ...next }))}
         records={records}
       />
+
+      <AiReportChatbotModal
+        isOpen={isAiChatbotOpen}
+        onClose={() => setIsAiChatbotOpen(false)}
+        records={records}
+        currentRole={currentRole}
+      />
+
+      {/* WhatsApp Notification Dispatch Modal for Tim Teknik */}
+      {activeWaNotification && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/60 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-2xl border border-emerald-200 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-900 text-white px-5 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-emerald-400 text-slate-950 rounded-lg font-bold">
+                  <Send className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold">
+                    Notifikasi WA ke Tim Teknik
+                  </h3>
+                  <p className="text-[11px] text-emerald-100">
+                    Informasi Pelanggan, No. HP &amp; Titik Google Maps Survei
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveWaNotification(null)}
+                className="text-emerald-100 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Summary Highlights: Customer Info, Phone, Maps */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                  <div className="text-[10px] font-semibold text-slate-500 uppercase">
+                    Pelanggan &amp; Permohonan
+                  </div>
+                  <div className="font-bold text-slate-900 mt-0.5">
+                    {activeWaNotification.record.projectName}
+                  </div>
+                  <div className="text-[11px] text-slate-600">
+                    {activeWaNotification.record.transaksi}
+                    {activeWaNotification.record.kategoriPfk
+                      ? ` (${activeWaNotification.record.kategoriPfk})`
+                      : ''}{' '}
+                    • {activeWaNotification.record.dayaBaru.toLocaleString('id-ID')} VA
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200">
+                  <div className="text-[10px] font-semibold text-emerald-800 uppercase flex items-center gap-1">
+                    <Phone className="w-3 h-3" /> No. HP / WA Pelanggan
+                  </div>
+                  <div className="font-bold font-mono text-emerald-950 mt-0.5">
+                    {activeWaNotification.payload.customerPhone}
+                  </div>
+                  <div className="text-[10px] text-emerald-700">
+                    Tujuan WA Teknik: {activeWaNotification.payload.recipientPhone}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-sky-50 border border-sky-200 text-xs flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold text-sky-800 uppercase flex items-center gap-1">
+                    <MapPin className="w-3 h-3 text-rose-600" /> Link Google Maps Lokasi Survei
+                  </div>
+                  <div className="font-mono text-[11px] text-sky-950 truncate mt-0.5">
+                    {activeWaNotification.payload.mapsUrl}
+                  </div>
+                </div>
+                <a
+                  href={activeWaNotification.payload.mapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 px-2.5 py-1.5 rounded-md bg-white border border-sky-300 text-sky-800 hover:bg-sky-100 text-[11px] font-semibold flex items-center gap-1"
+                >
+                  <span>Buka Maps</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+
+              {/* Full Formatted WA Message */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-slate-700">
+                    Isi Pesan WhatsApp untuk Tim Teknik:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(activeWaNotification.payload.message);
+                      setWaCopied(true);
+                      showToast('Pesan WA Tim Teknik berhasil disalin!', 'success');
+                    }}
+                    className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Copy className="w-3 h-3" />
+                    <span>{waCopied ? 'Tersalin!' : 'Salin Pesan'}</span>
+                  </button>
+                </div>
+                <div className="p-3 rounded-lg bg-slate-900 text-emerald-100 font-mono text-[11px] whitespace-pre-wrap max-h-48 overflow-y-auto border border-slate-700">
+                  {activeWaNotification.payload.message}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setActiveWaNotification(null)}
+                  className="px-3.5 py-2 rounded-lg border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition cursor-pointer"
+                >
+                  Selesai
+                </button>
+                <a
+                  href={activeWaNotification.payload.waUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm flex items-center gap-1.5 transition"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Kirim via WhatsApp ke Tim Teknik</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

@@ -25,7 +25,7 @@ interface GisSurveyorMapProps {
   onOpenWorkflowAction: (record: PermohonanItem) => void;
 }
 
-type MapFilterMode = 'survei' | 'survei_dan_mohon' | 'pfk_segera' | 'semua';
+type MapFilterMode = 'survei' | 'rab' | 'survei_dan_mohon' | 'pfk_segera' | 'semua';
 
 // Default center: ULP Borobudur (Kabupaten Magelang)
 const DEFAULT_CENTER: [number, number] = [-7.5812, 110.2319];
@@ -42,17 +42,22 @@ export const GisSurveyorMap: React.FC<GisSurveyorMapProps> = ({
 
   const [filterMode, setFilterMode] = useState<MapFilterMode>('survei');
   const [selectedClusterArea, setSelectedClusterArea] = useState<string | null>(null);
-  const [activeTileType, setActiveTileType] = useState<'streets' | 'topo'>('streets');
+  const [activeTileType, setActiveTileType] = useState<'streets' | 'satellite'>('streets');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Helper: Permohonan berstatus SURVEI/RAB
+  // Helper: Permohonan berstatus SURVEI
   const isSurveiStatus = (r: PermohonanItem): boolean => {
-    return r.status === 'SURVEI/RAB';
+    return r.status === 'SURVEI';
   };
 
-  // Helper: Permohonan antrean survei (SURVEI/RAB maupun MOHON)
+  // Helper: Permohonan berstatus RAB
+  const isRabStatus = (r: PermohonanItem): boolean => {
+    return r.status === 'RAB';
+  };
+
+  // Helper: Permohonan antrean survei & RAB (SURVEI, RAB, maupun MOHON)
   const isSurveyQueue = (r: PermohonanItem): boolean => {
-    return r.status === 'SURVEI/RAB' || r.status === 'MOHON';
+    return r.status === 'SURVEI' || r.status === 'RAB' || r.status === 'MOHON';
   };
 
   // Ekstrak area / kecamatan dari alamat untuk pengelompokan konsentrasi
@@ -88,6 +93,8 @@ export const GisSurveyorMap: React.FC<GisSurveyorMapProps> = ({
       // Filter mode
       if (filterMode === 'survei') {
         if (!isSurveiStatus(r)) return false;
+      } else if (filterMode === 'rab') {
+        if (!isRabStatus(r)) return false;
       } else if (filterMode === 'survei_dan_mohon') {
         if (!isSurveyQueue(r)) return false;
       } else if (filterMode === 'pfk_segera') {
@@ -120,6 +127,8 @@ export const GisSurveyorMap: React.FC<GisSurveyorMapProps> = ({
     const targetRecords =
       filterMode === 'survei'
         ? records.filter(isSurveiStatus)
+        : filterMode === 'rab'
+        ? records.filter(isRabStatus)
         : filterMode === 'survei_dan_mohon'
         ? records.filter(isSurveyQueue)
         : filterMode === 'pfk_segera'
@@ -166,6 +175,10 @@ export const GisSurveyorMap: React.FC<GisSurveyorMapProps> = ({
   // Total perhitungan untuk tombol filter
   const totalSurvei = useMemo(() => {
     return records.filter(isSurveiStatus).length;
+  }, [records]);
+
+  const totalRab = useMemo(() => {
+    return records.filter(isRabStatus).length;
   }, [records]);
 
   const totalSurveiDanMohon = useMemo(() => {
@@ -224,15 +237,27 @@ export const GisSurveyorMap: React.FC<GisSurveyorMapProps> = ({
       }
     });
 
-    const url =
-      activeTileType === 'streets'
-        ? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
-        : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
-
-    L.tileLayer(url, {
-      attribution: '&copy; OpenStreetMap & CartoDB • PT PLN ULP Borobudur',
-      maxZoom: 19,
-    }).addTo(map);
+    if (activeTileType === 'satellite') {
+      L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        {
+          attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar',
+          maxZoom: 19,
+        }
+      ).addTo(map);
+      L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+        {
+          maxZoom: 19,
+          opacity: 0.85,
+        }
+      ).addTo(map);
+    } else {
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+        maxZoom: 19,
+      }).addTo(map);
+    }
   }, [activeTileType]);
 
   // Update Markers ketika visibleRecords berubah
@@ -248,29 +273,36 @@ export const GisSurveyorMap: React.FC<GisSurveyorMapProps> = ({
       const coords = parseCoords(item.tagingLokasi);
       if (!coords) return;
 
-      const isSurvei = item.status === 'SURVEI/RAB';
+      const isSurvei = item.status === 'SURVEI';
+      const isRab = item.status === 'RAB';
       const isMohon = item.status === 'MOHON';
-      const isSurveyItem = isSurvei || isMohon;
+      const isSurveyItem = isSurvei || isRab || isMohon;
       const isPfk = item.transaksi === 'PFK';
 
       // Custom HTML Marker Icon
       let markerHtml = '';
       if (isSurveyItem) {
-        // Marker Survei / Antrean Mohon (Menyala, Pulse, Surveyor Priority)
+        // Marker Survei / RAB / Antrean Mohon
         markerHtml = `
           <div class="relative flex items-center justify-center cursor-pointer group">
             <span class="absolute w-8 h-8 rounded-full ${
-              isPfk ? 'bg-rose-500 animate-ping opacity-75' : 'bg-amber-400 animate-ping opacity-70'
+              isPfk
+                ? 'bg-rose-500 animate-ping opacity-75'
+                : isRab
+                ? 'bg-indigo-400 animate-ping opacity-70'
+                : 'bg-amber-400 animate-ping opacity-70'
             }"></span>
             <div class="relative w-8 h-8 rounded-full flex items-center justify-center shadow-lg border-2 border-white ${
               isPfk
                 ? 'bg-gradient-to-br from-rose-600 to-red-700 text-white font-extrabold text-xs'
+                : isRab
+                ? 'bg-gradient-to-br from-indigo-500 to-indigo-700 text-white font-bold text-xs'
                 : 'bg-gradient-to-br from-amber-500 to-amber-600 text-slate-950 font-bold text-xs'
             }">
-              ${isPfk ? '⚡' : '📍'}
+              ${isPfk ? '⚡' : isRab ? '🧮' : '📍'}
             </div>
             <div class="absolute -bottom-5 whitespace-nowrap bg-slate-900/90 text-white px-1.5 py-0.5 rounded text-[9px] font-bold shadow-md pointer-events-none">
-              ${isPfk ? 'PFK SURVEI' : isSurvei ? 'SURVEI / RAB' : 'MOHON'}
+              ${isPfk ? `PFK (${item.status})` : item.status}
             </div>
           </div>
         `;
@@ -308,15 +340,19 @@ export const GisSurveyorMap: React.FC<GisSurveyorMapProps> = ({
                 ? 'bg-rose-600 text-white'
                 : isSurvei
                 ? 'bg-amber-500 text-slate-950'
+                : isRab
+                ? 'bg-indigo-600 text-white'
                 : isMohon
                 ? 'bg-teal-600 text-white'
                 : 'bg-emerald-600 text-white'
             }">
               ${
                 isPfk
-                  ? '⚡ PFK - Survei Segera'
+                  ? `⚡ PFK - ${item.status}`
                   : isSurvei
-                  ? '🎯 Status Survei / RAB'
+                  ? '📐 Status: SURVEI'
+                  : isRab
+                  ? '🧮 Status: RAB'
                   : isMohon
                   ? '📋 Antrean Mohon'
                   : `✓ Status: ${item.status}`
@@ -434,7 +470,22 @@ export const GisSurveyorMap: React.FC<GisSurveyorMapProps> = ({
             }`}
           >
             <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
-            <span>Status Survei / RAB ({totalSurvei} Titik)</span>
+            <span>Status Survei ({totalSurvei} Titik)</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setFilterMode('rab');
+              setSelectedClusterArea(null);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer shadow-xs ${
+              filterMode === 'rab'
+                ? 'bg-indigo-500 text-white ring-2 ring-indigo-300'
+                : 'bg-white/10 text-white hover:bg-white/20'
+            }`}
+          >
+            <span className="w-2.5 h-2.5 rounded-full bg-indigo-400" />
+            <span>Status RAB ({totalRab} Titik)</span>
           </button>
 
           <button
@@ -607,7 +658,7 @@ export const GisSurveyorMap: React.FC<GisSurveyorMapProps> = ({
             <div className="bg-white/90 backdrop-blur-xs p-1.5 rounded-lg shadow-md border border-slate-200 flex items-center gap-1 text-xs">
               <button
                 onClick={() => setActiveTileType('streets')}
-                className={`px-2 py-1 rounded font-semibold transition ${
+                className={`px-2.5 py-1 rounded font-semibold transition cursor-pointer ${
                   activeTileType === 'streets'
                     ? 'bg-sky-700 text-white shadow-2xs'
                     : 'text-slate-700 hover:bg-slate-100'
@@ -616,14 +667,14 @@ export const GisSurveyorMap: React.FC<GisSurveyorMapProps> = ({
                 Peta Jalan
               </button>
               <button
-                onClick={() => setActiveTileType('topo')}
-                className={`px-2 py-1 rounded font-semibold transition ${
-                  activeTileType === 'topo'
+                onClick={() => setActiveTileType('satellite')}
+                className={`px-2.5 py-1 rounded font-semibold transition cursor-pointer ${
+                  activeTileType === 'satellite'
                     ? 'bg-sky-700 text-white shadow-2xs'
                     : 'text-slate-700 hover:bg-slate-100'
                 }`}
               >
-                Peta Terang
+                Satelit
               </button>
             </div>
           </div>

@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { PermohonanItem, StatusPermohonan, TransaksiType, UserRole } from '../types';
 import { StatusWorkflowBadge, TransaksiBadge } from './StatusWorkflowBadge';
-import { formatPowerVA, formatRupiah } from '../utils/plnValidation';
+import { formatPowerVA, formatRupiah, calculateDaysSinceInput } from '../utils/plnValidation';
 import {
   Search,
   Filter,
@@ -29,6 +29,7 @@ import {
   Tag,
 } from 'lucide-react';
 import { GisSurveyorMap } from './GisSurveyorMap';
+import { DashboardWidget } from './DashboardWidget';
 
 interface DashboardOverviewProps {
   records: PermohonanItem[];
@@ -51,14 +52,15 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [filterTransaksi, setFilterTransaksi] = useState<string>('ALL');
   const [filterIdPelPresence, setFilterIdPelPresence] = useState<'ALL' | 'WITH_IDPEL' | 'WITHOUT_IDPEL'>('ALL');
-  const [sortBy, setSortBy] = useState<'date_desc' | 'name_asc' | 'idpel_asc' | 'daya_desc' | 'rab_desc'>('date_desc');
+  const [sortBy, setSortBy] = useState<'date_desc' | 'days_desc' | 'name_asc' | 'idpel_asc' | 'daya_desc' | 'rab_desc'>('date_desc');
   const [viewMode, setViewMode] = useState<'table' | 'kanban' | 'map'>('table');
 
   // Counts for filter dropdown options
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {
       MOHON: 0,
-      'SURVEI/RAB': 0,
+      SURVEI: 0,
+      RAB: 0,
       'TANPA PERLUASAN': 0,
       BAYAR: 0,
       KERJA: 0,
@@ -98,7 +100,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     const list = records.filter((r) => {
       // Role-specific scoping if desired
       if (currentRole === 'teknik' && filterStatus === 'ROLE_DEFAULT') {
-        if (r.status !== 'SURVEI/RAB' && r.transaksi !== 'PFK') return false;
+        if (r.status !== 'SURVEI' && r.status !== 'RAB' && r.transaksi !== 'PFK') return false;
       }
 
       if (filterStatus !== 'ALL' && filterStatus !== 'ROLE_DEFAULT' && r.status !== filterStatus) {
@@ -160,6 +162,9 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       if (sortBy === 'daya_desc') {
         return (b.dayaBaru || 0) - (a.dayaBaru || 0);
       }
+      if (sortBy === 'days_desc') {
+        return calculateDaysSinceInput(b).days - calculateDaysSinceInput(a).days;
+      }
       if (sortBy === 'rab_desc') {
         return (b.rab || 0) - (a.rab || 0);
       }
@@ -214,9 +219,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   // Executive Metrics
   const metrics = useMemo(() => {
     const total = records.length;
-    const pfkPending = records.filter((r) => r.transaksi === 'PFK' && r.status === 'SURVEI/RAB').length;
+    const pfkPending = records.filter(
+      (r) => r.transaksi === 'PFK' && (r.status === 'SURVEI' || r.status === 'RAB')
+    ).length;
     const mohonPp = records.filter((r) => r.status === 'MOHON').length;
-    const surveyTeknik = records.filter((r) => r.status === 'SURVEI/RAB').length;
+    const surveyTeknik = records.filter((r) => r.status === 'SURVEI').length;
+    const rabTeknik = records.filter((r) => r.status === 'RAB').length;
     const bayar = records.filter((r) => r.status === 'BAYAR').length;
     const kerjaK3l = records.filter((r) => r.status === 'KERJA').length;
     const nyalaTe = records.filter((r) => r.status === 'NYALA').length;
@@ -228,6 +236,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       pfkPending,
       mohonPp,
       surveyTeknik,
+      rabTeknik,
       bayar,
       kerjaK3l,
       nyalaTe,
@@ -282,7 +291,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       'Foto Meter Sesudah (TE)',
       'Foto IDPEL Tetangga (TE)',
       'Titik Koordinat GPS',
-      'Tgl Permohonan',
+      'Tgl Input Surat',
+      'Counter Hari (Sejak Input)',
       'Keterangan Pekerjaan',
       'Keterangan Status',
       'Keterangan Kendala',
@@ -294,6 +304,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         const hasFotoSesudah = Boolean(r.fotoMeterSesudah || r.fotoKwhMeterBaru);
         const hasFotoIdpelTet = Boolean(r.fotoIdpelTetangga);
 
+        const dayInfo = calculateDaysSinceInput(r);
         return `<tr>
           <td style="mso-number-format:'\\@'; font-weight:bold;">${escapeXml(r.noNodin)}</td>
           <td style="mso-number-format:'\\@';">${escapeXml(r.id)}</td>
@@ -325,7 +336,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           <td style="text-align:center;">${hasFotoSesudah ? 'TERLAMPIR' : 'BELUM ADA'}</td>
           <td style="text-align:center;">${hasFotoIdpelTet ? 'TERLAMPIR' : 'BELUM ADA'}</td>
           <td>${escapeXml(r.tagingLokasi || '-')}</td>
-          <td style="text-align:center;">${escapeXml(r.tglSurat || '')}</td>
+          <td style="text-align:center;">${escapeXml(dayInfo.inputDate)}</td>
+          <td style="text-align:center; font-weight:bold;">${escapeXml(dayInfo.shortLabel)}</td>
           <td>${escapeXml(r.keteranganPekerjaan || '')}</td>
           <td>${escapeXml(r.keteranganStatus || '')}</td>
           <td>${escapeXml(r.keteranganKendala || '-')}</td>
@@ -386,9 +398,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
+
   const kanbanColumns: StatusPermohonan[] = [
     'MOHON',
-    'SURVEI/RAB',
+    'SURVEI',
+    'RAB',
     'TANPA PERLUASAN',
     'BAYAR',
     'KERJA',
@@ -396,160 +411,178 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     'PDL',
   ];
 
+  const activeFilterCount =
+    (filterStatus !== 'ALL' ? 1 : 0) +
+    (filterTransaksi !== 'ALL' ? 1 : 0) +
+    (filterIdPelPresence !== 'ALL' ? 1 : 0) +
+    (sortBy !== 'date_desc' ? 1 : 0);
+
   return (
-    <div className="space-y-6">
-      {/* Role Notice & Focus Guide */}
-      <div className="bg-sky-50 border border-sky-200 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-sky-700 text-white rounded-lg">
-            {currentRole === 'security' && <Shield className="w-5 h-5" />}
-            {currentRole === 'pp' && <Users className="w-5 h-5" />}
-            {currentRole === 'teknik' && <Wrench className="w-5 h-5" />}
-            {currentRole === 'k3l' && <HardHat className="w-5 h-5" />}
-            {currentRole === 'te' && <Zap className="w-5 h-5" />}
-            {currentRole === 'all' && <LayoutGrid className="w-5 h-5" />}
-          </div>
-          <div>
-            <div className="text-xs font-bold text-sky-950 uppercase tracking-wide">
-              Mode Bagian: {currentRole === 'all' ? 'Tinjauan Seluruh Bagian' : currentRole.toUpperCase()}
+    <div className="space-y-4">
+      {/* Compact Role Focus Strip (only shown when a specific department role is active) */}
+      {currentRole !== 'all' && (
+        <div className="bg-sky-50 border border-sky-200 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-1.5 bg-sky-700 text-white rounded-md shrink-0">
+              {currentRole === 'security' && <Shield className="w-4 h-4" />}
+              {currentRole === 'pp' && <Users className="w-4 h-4" />}
+              {currentRole === 'teknik' && <Wrench className="w-4 h-4" />}
+              {currentRole === 'k3l' && <HardHat className="w-4 h-4" />}
+              {currentRole === 'te' && <Zap className="w-4 h-4" />}
             </div>
-            <div className="text-xs text-sky-800">
-              {currentRole === 'security' &&
-                'Pos Security / Front Desk: Pendaftaran cepat pemohon, verifikasi awal identitas & auto-routing PFK/PBPD.'}
-              {currentRole === 'pp' &&
-                'Pelayanan Pelanggan (PP): Verifikasi berkas, persetujuan daya, monitoring bayar BP & penerbitan PDL akhir.'}
-              {currentRole === 'teknik' &&
-                'Teknik: Survei tiang & jaringan, taging GPS, penyusunan RAB & pengawasan vendor pekerjaan.'}
-              {currentRole === 'k3l' &&
-                'K3L: Penerbitan Working Permit (WP), validasi JSA & checklist kepatuhan keselamatan kerja.'}
-              {currentRole === 'te' &&
-                'Transaksi Energi (TE): Komisioning uji teknis, pendataan kWh meter transaksi, rasio CT & segel resmi PLN.'}
-              {currentRole === 'all' &&
-                'Monitoring menyeluruh alur permohonan pasang baru, perubahan daya, dan PFK.'}
+            <div className="text-xs text-sky-950 truncate">
+              <strong className="uppercase mr-1.5">Mode {currentRole}:</strong>
+              <span className="text-sky-800">
+                {currentRole === 'security' && 'Pendaftaran cepat pemohon & routing otomatis PFK/PBPD.'}
+                {currentRole === 'pp' && 'Verifikasi berkas permohonan, pelunasan BP & penerbitan PDL.'}
+                {currentRole === 'teknik' && 'Input Nomor Gardu, Tiang, Koordinat GPS Survei & penyusunan RAB.'}
+                {currentRole === 'k3l' && 'Penerbitan Working Permit (WP), validasi JSA & K3L.'}
+                {currentRole === 'te' && 'Komisioning meter, Stand Bongkar/Pasang (WBP/LWBP/kVar) & berkas PDL.'}
+              </span>
             </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-2">
-          {metrics.pfkPending > 0 && (
-            <button
-              onClick={() => {
-                setFilterTransaksi('PFK');
-                setFilterStatus('SURVEI/RAB');
-              }}
-              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-xs animate-pulse flex items-center gap-1.5"
-            >
-              <span>⚡ {metrics.pfkPending} Antrean PFK Segera</span>
-            </button>
-          )}
-
-          <button
-            onClick={onOpenQuickIntake}
-            className="px-3 py-1.5 bg-sky-700 hover:bg-sky-800 text-white rounded-lg text-xs font-bold shadow-xs"
-          >
-            + Input Permohonan
-          </button>
-        </div>
-      </div>
-
-      {/* Metric Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div
-          onClick={() => {
-            setFilterStatus('ALL');
-            setFilterTransaksi('ALL');
-          }}
-          className="p-3.5 bg-white border border-slate-200 rounded-xl shadow-xs cursor-pointer hover:border-sky-400 transition"
-        >
-          <div className="text-[11px] font-semibold text-slate-500">Total Permohonan</div>
-          <div className="text-xl font-black text-slate-900 mt-1">{metrics.total}</div>
-          <div className="text-[10px] text-sky-700 font-semibold mt-0.5">
-            {metrics.totalDayaKva.toLocaleString('id-ID')} kVA Terdaftar
-          </div>
-        </div>
-
-        <div
-          onClick={() => {
-            setFilterStatus('SURVEI/RAB');
-            setFilterTransaksi('PFK');
-          }}
-          className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl shadow-xs cursor-pointer hover:border-amber-500 transition"
-        >
-          <div className="text-[11px] font-bold text-amber-900 flex items-center gap-1">
-            <span>⚡ PFK Segera</span>
-          </div>
-          <div className="text-xl font-black text-amber-950 mt-1">{metrics.pfkPending}</div>
-          <div className="text-[10px] text-amber-800 font-medium mt-0.5">Survei Lapangan Cepat</div>
-        </div>
-
-        <div
-          onClick={() => setFilterStatus('MOHON')}
-          className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-xl shadow-xs cursor-pointer hover:border-blue-400 transition"
-        >
-          <div className="text-[11px] font-semibold text-blue-900">1. Mohon (PP)</div>
-          <div className="text-xl font-black text-blue-950 mt-1">{metrics.mohonPp}</div>
-          <div className="text-[10px] text-blue-700 mt-0.5">Verifikasi Berkas</div>
-        </div>
-
-        <div
-          onClick={() => setFilterStatus('SURVEI/RAB')}
-          className="p-3.5 bg-amber-50/60 border border-amber-200 rounded-xl shadow-xs cursor-pointer hover:border-amber-400 transition"
-        >
-          <div className="text-[11px] font-semibold text-amber-900">2. Survei / RAB</div>
-          <div className="text-xl font-black text-amber-950 mt-1">{metrics.surveyTeknik}</div>
-          <div className="text-[10px] text-amber-700 mt-0.5">Tiang & Gambar</div>
-        </div>
-
-        <div
-          onClick={() => setFilterStatus('KERJA')}
-          className="p-3.5 bg-purple-50/70 border border-purple-200 rounded-xl shadow-xs cursor-pointer hover:border-purple-400 transition"
-        >
-          <div className="text-[11px] font-semibold text-purple-900">3. Kerja & K3L</div>
-          <div className="text-xl font-black text-purple-950 mt-1">{metrics.kerjaK3l}</div>
-          <div className="text-[10px] text-purple-700 mt-0.5">Working Permit</div>
-        </div>
-
-        <div
-          onClick={() => setFilterStatus('NYALA')}
-          className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-xl shadow-xs cursor-pointer hover:border-emerald-400 transition"
-        >
-          <div className="text-[11px] font-semibold text-emerald-900">4. Nyala (TE)</div>
-          <div className="text-xl font-black text-emerald-950 mt-1">{metrics.nyalaTe}</div>
-          <div className="text-[10px] text-emerald-700 mt-0.5">Komisioning & Segel</div>
-        </div>
-      </div>
-
-      {/* Toolbar: Search, Filters, View Modes & Export */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-3.5">
-        {/* Main Controls Row: Search Bar & Filter Dropdowns */}
-        <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3">
-          {/* 1. Search Bar */}
-          <div className="relative flex-1 min-w-[280px] w-full">
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-sky-600 z-10 flex items-center">
-              <Search className="w-4 h-4 shrink-0" />
-            </div>
-            <input
-              type="text"
-              aria-label="Cari permohonan"
-              placeholder="Cari Nama Proyek/Pemohon, IDPEL (mis: 52101...), No Nodin, Status (MOHON, SURVEI, BAYAR, PDL)..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full h-10 pl-9 pr-9 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium text-slate-900 placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-sky-500 focus:border-sky-500 focus:outline-hidden transition shadow-2xs"
-            />
-            {searchTerm && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            {currentRole === 'pp' && (
               <button
                 type="button"
-                onClick={() => setSearchTerm('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 flex items-center text-slate-400 hover:text-rose-600 transition z-10"
-                title="Hapus pencarian"
+                onClick={() => setFilterStatus(filterStatus === 'MOHON' ? 'ALL' : 'MOHON')}
+                className="px-2.5 py-1 bg-white hover:bg-sky-100 text-sky-900 border border-sky-300 rounded-md text-xs font-bold transition cursor-pointer"
               >
-                <X className="w-4 h-4" />
+                {filterStatus === 'MOHON' ? 'Tampilkan Semua' : 'Fokus Antrean Mohon'}
+              </button>
+            )}
+            {currentRole === 'teknik' && (
+              <button
+                type="button"
+                onClick={() => setFilterStatus(filterStatus === 'SURVEI' ? 'RAB' : 'SURVEI')}
+                className="px-2.5 py-1 bg-white hover:bg-sky-100 text-sky-900 border border-sky-300 rounded-md text-xs font-bold transition cursor-pointer"
+              >
+                {filterStatus === 'SURVEI' ? 'Fokus Antrean RAB' : 'Fokus Antrean Survei'}
+              </button>
+            )}
+            {currentRole === 'k3l' && (
+              <button
+                type="button"
+                onClick={() => setFilterStatus(filterStatus === 'KERJA' ? 'ALL' : 'KERJA')}
+                className="px-2.5 py-1 bg-white hover:bg-sky-100 text-sky-900 border border-sky-300 rounded-md text-xs font-bold transition cursor-pointer"
+              >
+                {filterStatus === 'KERJA' ? 'Tampilkan Semua' : 'Fokus Antrean Kerja/WP'}
+              </button>
+            )}
+            {currentRole === 'te' && (
+              <button
+                type="button"
+                onClick={() => setFilterStatus(filterStatus === 'NYALA' ? 'ALL' : 'NYALA')}
+                className="px-2.5 py-1 bg-white hover:bg-sky-100 text-sky-900 border border-sky-300 rounded-md text-xs font-bold transition cursor-pointer"
+              >
+                {filterStatus === 'NYALA' ? 'Tampilkan Semua' : 'Fokus Antrean Nyala TE'}
               </button>
             )}
           </div>
+        </div>
+      )}
 
-          {/* 2. Filter Dropdowns Group */}
-          <div className="flex flex-wrap items-center gap-2">
+      {/* Unified Pipeline Summary & Bottleneck Strip (Collapsed Details by Default) */}
+      <DashboardWidget
+        records={records}
+        selectedStatus={filterStatus}
+        selectedTransaksi={filterTransaksi}
+        onSelectStatus={(status) => setFilterStatus(status)}
+        onSelectTransaksi={(tr) => setFilterTransaksi(tr)}
+        onSelectRecord={onSelectRecord}
+      />
+
+      {/* Streamlined Toolbar: Search, Collapsible Mobile Filters, View Modes & Export */}
+      <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-3.5 shadow-xs space-y-2.5">
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-2.5">
+          {/* Top Row on Mobile: Search Input + Mobile Filter Button + View Mode Toggle */}
+          <div className="flex items-center gap-2 flex-1">
+            <div className="relative flex-1 min-w-0">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-sky-600 z-10 flex items-center">
+                <Search className="w-4 h-4 shrink-0" />
+              </div>
+              <input
+                type="text"
+                aria-label="Cari permohonan"
+                placeholder="Cari Nama Pelanggan, IDPEL, Gardu, Tiang, atau No Nodin..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full h-9 sm:h-10 pl-9 pr-8 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium text-slate-900 placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-sky-500 focus:border-sky-500 focus:outline-hidden transition"
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 flex items-center text-slate-400 hover:text-rose-600 transition z-10"
+                  title="Hapus pencarian"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Mobile Filter Toggle Button (< lg) */}
+            <button
+              type="button"
+              onClick={() => setShowMobileFilters((prev) => !prev)}
+              aria-expanded={showMobileFilters}
+              className={`lg:hidden flex items-center gap-1.5 px-3 h-9 sm:h-10 rounded-lg border text-xs font-bold shrink-0 transition cursor-pointer ${
+                showMobileFilters || activeFilterCount > 0
+                  ? 'bg-sky-50 border-sky-500 text-sky-900'
+                  : 'bg-white border-slate-300 text-slate-700'
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 text-sky-700" />
+              <span>Filter</span>
+              {activeFilterCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-sky-700 text-white text-[10px]">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+
+            {/* View Mode Toggle */}
+            <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden bg-slate-100 p-0.5 shrink-0">
+              <button
+                onClick={() => setViewMode('table')}
+                className={`px-2 py-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer ${
+                  viewMode === 'table' ? 'bg-white text-sky-800 shadow-2xs' : 'text-slate-600'
+                }`}
+                title="Tampilan Daftar / Tabel"
+              >
+                <List className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Daftar</span>
+              </button>
+              <button
+                onClick={() => setViewMode('kanban')}
+                className={`px-2 py-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer ${
+                  viewMode === 'kanban' ? 'bg-white text-sky-800 shadow-2xs' : 'text-slate-600'
+                }`}
+                title="Tampilan Kanban Workflow"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Kanban</span>
+              </button>
+              <button
+                onClick={() => setViewMode('map')}
+                className={`px-2 py-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer ${
+                  viewMode === 'map' ? 'bg-white text-sky-800 shadow-2xs' : 'text-slate-600'
+                }`}
+                title="Tampilan Peta Titik Tiang PLN"
+              >
+                <MapPin className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Peta GIS</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Filter Dropdowns Group (Always visible on lg+, collapsible on mobile) */}
+          <div
+            className={`${
+              showMobileFilters ? 'flex' : 'hidden lg:flex'
+            } flex-wrap items-center gap-2 pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100`}
+          >
             {/* Status Dropdown */}
             <div className="relative flex items-center">
               <label htmlFor="filter-status-select" className="sr-only">
@@ -562,7 +595,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 id="filter-status-select"
                 value={filterStatus}
                 onChange={(e) => setFilterStatus(e.target.value)}
-                className={`pl-8 pr-7 py-2 border rounded-lg text-xs font-semibold appearance-none bg-white transition cursor-pointer shadow-xs ${
+                className={`pl-8 pr-6 py-1.5 h-9 border rounded-lg text-xs font-semibold appearance-none bg-white transition cursor-pointer ${
                   filterStatus !== 'ALL'
                     ? 'border-sky-500 bg-sky-50 text-sky-950 ring-1 ring-sky-400'
                     : 'border-slate-300 text-slate-700 hover:border-slate-400'
@@ -570,12 +603,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               >
                 <option value="ALL">Status: Semua ({records.length})</option>
                 <option value="MOHON">1. MOHON ({statusCounts['MOHON']})</option>
-                <option value="SURVEI/RAB">2. SURVEI/RAB ({statusCounts['SURVEI/RAB']})</option>
+                <option value="SURVEI">2. SURVEI ({statusCounts['SURVEI']})</option>
+                <option value="RAB">3. RAB ({statusCounts['RAB']})</option>
                 <option value="TANPA PERLUASAN">TANPA PERLUASAN ({statusCounts['TANPA PERLUASAN']})</option>
-                <option value="BAYAR">3. BAYAR ({statusCounts['BAYAR']})</option>
-                <option value="KERJA">4. KERJA ({statusCounts['KERJA']})</option>
-                <option value="NYALA">5. NYALA ({statusCounts['NYALA']})</option>
-                <option value="PDL">6. PDL Selesai ({statusCounts['PDL']})</option>
+                <option value="BAYAR">4. BAYAR ({statusCounts['BAYAR']})</option>
+                <option value="KERJA">5. KERJA ({statusCounts['KERJA']})</option>
+                <option value="NYALA">6. NYALA ({statusCounts['NYALA']})</option>
+                <option value="PDL">7. PDL Selesai ({statusCounts['PDL']})</option>
               </select>
               <div className="absolute right-2 pointer-events-none text-slate-400 text-[10px]">▼</div>
             </div>
@@ -592,7 +626,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 id="filter-transaksi-select"
                 value={filterTransaksi}
                 onChange={(e) => setFilterTransaksi(e.target.value)}
-                className={`pl-8 pr-7 py-2 border rounded-lg text-xs font-semibold appearance-none bg-white transition cursor-pointer shadow-xs ${
+                className={`pl-8 pr-6 py-1.5 h-9 border rounded-lg text-xs font-semibold appearance-none bg-white transition cursor-pointer ${
                   filterTransaksi !== 'ALL'
                     ? 'border-amber-500 bg-amber-50 text-amber-950 ring-1 ring-amber-400'
                     : 'border-slate-300 text-slate-700 hover:border-slate-400'
@@ -618,15 +652,15 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 id="filter-idpel-select"
                 value={filterIdPelPresence}
                 onChange={(e) => setFilterIdPelPresence(e.target.value as any)}
-                className={`pl-8 pr-7 py-2 border rounded-lg text-xs font-semibold appearance-none bg-white transition cursor-pointer shadow-xs ${
+                className={`pl-8 pr-6 py-1.5 h-9 border rounded-lg text-xs font-semibold appearance-none bg-white transition cursor-pointer ${
                   filterIdPelPresence !== 'ALL'
                     ? 'border-indigo-500 bg-indigo-50 text-indigo-950 ring-1 ring-indigo-400'
                     : 'border-slate-300 text-slate-700 hover:border-slate-400'
                 }`}
               >
-                <option value="ALL">IDPEL: Semua Pelanggan</option>
-                <option value="WITH_IDPEL">Sudah Ada IDPEL ({idpelCounts.withIdpel})</option>
-                <option value="WITHOUT_IDPEL">Belum Ada IDPEL ({idpelCounts.withoutIdpel})</option>
+                <option value="ALL">IDPEL: Semua</option>
+                <option value="WITH_IDPEL">Ada IDPEL ({idpelCounts.withIdpel})</option>
+                <option value="WITHOUT_IDPEL">Belum IDPEL ({idpelCounts.withoutIdpel})</option>
               </select>
               <div className="absolute right-2 pointer-events-none text-slate-400 text-[10px]">▼</div>
             </div>
@@ -643,391 +677,399 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 id="filter-sort-select"
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as any)}
-                className={`pl-8 pr-7 py-2 border rounded-lg text-xs font-semibold appearance-none bg-white transition cursor-pointer shadow-xs ${
+                className={`pl-8 pr-6 py-1.5 h-9 border rounded-lg text-xs font-semibold appearance-none bg-white transition cursor-pointer ${
                   sortBy !== 'date_desc'
                     ? 'border-slate-600 bg-slate-100 text-slate-900 font-bold'
                     : 'border-slate-300 text-slate-700 hover:border-slate-400'
                 }`}
               >
-                <option value="date_desc">Urut: Tgl Terbaru</option>
-                <option value="name_asc">Nama Proyek (A - Z)</option>
+                <option value="date_desc">Urut: Terbaru</option>
+                <option value="days_desc">Durasi Hari Terlama</option>
+                <option value="name_asc">Nama (A - Z)</option>
                 <option value="idpel_asc">Nomor IDPEL</option>
-                <option value="daya_desc">Daya Terbesar (kVA)</option>
-                <option value="rab_desc">Nilai RAB Terbesar</option>
+                <option value="daya_desc">Daya Terbesar</option>
+                <option value="rab_desc">RAB Terbesar</option>
               </select>
               <div className="absolute right-2 pointer-events-none text-slate-400 text-[10px]">▼</div>
-            </div>
-
-            {/* View Mode Toggle */}
-            <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden bg-slate-100 p-0.5">
-              <button
-                onClick={() => setViewMode('table')}
-                className={`p-1.5 rounded text-xs font-semibold flex items-center gap-1 ${
-                  viewMode === 'table' ? 'bg-white text-sky-800 shadow-xs' : 'text-slate-600'
-                }`}
-                title="Tampilan Tabel Master"
-              >
-                <List className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Tabel</span>
-              </button>
-              <button
-                onClick={() => setViewMode('kanban')}
-                className={`p-1.5 rounded text-xs font-semibold flex items-center gap-1 ${
-                  viewMode === 'kanban' ? 'bg-white text-sky-800 shadow-xs' : 'text-slate-600'
-                }`}
-                title="Tampilan Kanban Workflow"
-              >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Kanban</span>
-              </button>
-              <button
-                onClick={() => setViewMode('map')}
-                className={`p-1.5 rounded text-xs font-semibold flex items-center gap-1 ${
-                  viewMode === 'map' ? 'bg-white text-sky-800 shadow-xs' : 'text-slate-600'
-                }`}
-                title="Tampilan Peta Titik Tiang PLN"
-              >
-                <MapPin className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Peta GIS</span>
-              </button>
             </div>
 
             {/* Export XLS */}
             <button
               onClick={handleExportXls}
-              className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 shadow-xs transition hover:border-emerald-500 hover:text-emerald-800"
+              className="flex items-center gap-1.5 px-3 h-9 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 transition hover:border-emerald-500 hover:text-emerald-800 cursor-pointer"
               title="Unduh Data Format Microsoft Excel (.xls)"
             >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-              <span className="hidden md:inline">Export XLS</span>
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Export XLS</span>
             </button>
           </div>
         </div>
 
-        {/* Quick Filter Presets Row */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">
-              Filter Cepat:
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setFilterStatus('ALL');
-                setFilterTransaksi('ALL');
-                setFilterIdPelPresence('ALL');
-              }}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition ${
-                filterStatus === 'ALL' && filterTransaksi === 'ALL' && filterIdPelPresence === 'ALL'
-                  ? 'bg-slate-800 text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              Semua ({records.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setFilterStatus('SURVEI/RAB');
-              }}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition ${
-                filterStatus === 'SURVEI/RAB'
-                  ? 'bg-amber-600 text-white shadow-xs'
-                  : 'bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-200'
-              }`}
-            >
-              Survei / RAB ({statusCounts['SURVEI/RAB']})
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setFilterTransaksi('PFK');
-              }}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition ${
-                filterTransaksi === 'PFK'
-                  ? 'bg-rose-600 text-white shadow-xs'
-                  : 'bg-rose-50 text-rose-900 hover:bg-rose-100 border border-rose-200'
-              }`}
-            >
-              ⚡ PFK ({transaksiCounts.PFK})
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setFilterStatus('NYALA');
-              }}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition ${
-                filterStatus === 'NYALA'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-emerald-50 text-emerald-900 hover:bg-emerald-100 border border-emerald-200'
-              }`}
-            >
-              Nyala TE ({statusCounts['NYALA']})
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setFilterStatus('PDL');
-              }}
-              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition ${
-                filterStatus === 'PDL'
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'bg-indigo-50 text-indigo-900 hover:bg-indigo-100 border border-indigo-200'
-              }`}
-            >
-              Selesai PDL ({statusCounts['PDL']})
-            </button>
-          </div>
-
-          {/* Result Counter & Reset Button */}
-          <div className="flex items-center gap-3 text-xs">
-            <span className="text-slate-500">
-              Menampilkan <strong className="text-slate-900 font-bold">{filteredRecords.length}</strong> dari{' '}
-              {records.length} data
-            </span>
-            {hasActiveFilters && (
-              <button
-                type="button"
-                onClick={handleResetFilters}
-                className="flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-md border border-rose-200 transition"
-                title="Reset semua filter dan pencarian"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span>Reset Filter</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Active Filter Badges */}
+        {/* Compact Active Filter Summary Row (Only shown when filters/search are active) */}
         {hasActiveFilters && (
-          <div className="flex flex-wrap items-center gap-1.5 pt-1 text-xs">
-            <span className="text-[11px] text-slate-400 font-medium">Filter aktif:</span>
-            {searchTerm.trim() && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-sky-100 text-sky-900 font-semibold text-xs border border-sky-200">
-                <span>Pencarian: <strong>&ldquo;{searchTerm}&rdquo;</strong></span>
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-slate-500">
+                Menampilkan <strong className="text-slate-900">{filteredRecords.length}</strong> dari {records.length} data:
+              </span>
+              {searchTerm.trim() && (
                 <button
                   type="button"
                   onClick={() => setSearchTerm('')}
-                  className="hover:text-rose-700"
-                  title="Hapus pencarian ini"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-50 text-sky-900 font-semibold text-[11px] border border-sky-200 hover:bg-sky-100 cursor-pointer"
                 >
+                  <span>Cari: &ldquo;{searchTerm}&rdquo;</span>
                   <X className="w-3 h-3" />
                 </button>
-              </span>
-            )}
-            {filterStatus !== 'ALL' && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-950 font-semibold text-xs border border-amber-200">
-                <span>Status: <strong>{filterStatus}</strong></span>
+              )}
+              {filterStatus !== 'ALL' && (
                 <button
                   type="button"
                   onClick={() => setFilterStatus('ALL')}
-                  className="hover:text-rose-700"
-                  title="Hapus filter status"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-950 font-semibold text-[11px] border border-amber-200 hover:bg-amber-100 cursor-pointer"
                 >
+                  <span>Status: {filterStatus}</span>
                   <X className="w-3 h-3" />
                 </button>
-              </span>
-            )}
-            {filterTransaksi !== 'ALL' && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-950 font-semibold text-xs border border-rose-200">
-                <span>Transaksi: <strong>{filterTransaksi}</strong></span>
+              )}
+              {filterTransaksi !== 'ALL' && (
                 <button
                   type="button"
                   onClick={() => setFilterTransaksi('ALL')}
-                  className="hover:text-rose-700"
-                  title="Hapus filter transaksi"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-50 text-rose-950 font-semibold text-[11px] border border-rose-200 hover:bg-rose-100 cursor-pointer"
                 >
+                  <span>Transaksi: {filterTransaksi}</span>
                   <X className="w-3 h-3" />
                 </button>
-              </span>
-            )}
-            {filterIdPelPresence !== 'ALL' && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-950 font-semibold text-xs border border-indigo-200">
-                <span>IDPEL: <strong>{filterIdPelPresence === 'WITH_IDPEL' ? 'Sudah Ada IDPEL' : 'Belum Ada IDPEL'}</strong></span>
-                <button
-                  type="button"
-                  onClick={() => setFilterIdPelPresence('ALL')}
-                  className="hover:text-rose-700"
-                  title="Hapus filter IDPEL"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
-            )}
-            {sortBy !== 'date_desc' && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-850 font-semibold text-xs border border-slate-300">
-                <span>Urutan: <strong>{sortBy}</strong></span>
-                <button
-                  type="button"
-                  onClick={() => setSortBy('date_desc')}
-                  className="hover:text-rose-700"
-                  title="Kembalikan urutan default"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
-            )}
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold text-rose-700 hover:underline cursor-pointer"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Reset Filter</span>
+            </button>
           </div>
         )}
       </div>
 
-      {/* VIEW 1: MASTER DATA TABLE */}
+      {/* VIEW 1: MASTER DATA (MOBILE CARD VIEW + DESKTOP TABLE) */}
       {viewMode === 'table' && (
-        <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 uppercase tracking-wider text-[11px] font-bold">
-                  <th className="py-3 px-3">No Nodin & ID</th>
-                  <th className="py-3 px-3">Status Progres</th>
-                  <th className="py-3 px-3">Nama Pemohon & Alamat</th>
-                  <th className="py-3 px-3">Transaksi</th>
-                  <th className="py-3 px-3">Daya & Tarif</th>
-                  <th className="py-3 px-3">IDPEL / Tiang</th>
-                  <th className="py-3 px-3">RAB (Rp)</th>
-                  <th className="py-3 px-3">K3L & TE</th>
-                  <th className="py-3 px-3 text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredRecords.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="py-14 text-center text-slate-500">
-                      <div className="max-w-md mx-auto space-y-2">
-                        <div className="w-12 h-12 mx-auto bg-slate-100 text-slate-400 rounded-full flex items-center justify-center">
-                          <Search className="w-6 h-6 text-slate-400" />
-                        </div>
-                        <div className="font-bold text-slate-800 text-sm">Tidak ada permohonan yang sesuai</div>
-                        <div className="text-xs text-slate-500">
-                          {searchTerm.trim() ? (
-                            <>
-                              Tidak ditemukan permohonan dengan kata kunci{' '}
-                              <span className="font-semibold text-slate-800">&ldquo;{searchTerm}&rdquo;</span>.
-                            </>
-                          ) : (
-                            'Tidak ada permohonan yang cocok dengan kombinasi filter yang dipilih.'
-                          )}
-                        </div>
-                        <div className="pt-2">
-                          <button
-                            type="button"
-                            onClick={handleResetFilters}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-sky-700 hover:bg-sky-800 text-white rounded-lg text-xs font-semibold shadow-xs transition"
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                            <span>Reset Semua Filter &amp; Pencarian</span>
-                          </button>
-                        </div>
+        <>
+          {/* A. MOBILE CARD LIST (< md) — Thumb-friendly for field officers */}
+          <div className="md:hidden space-y-2.5">
+            {filteredRecords.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-2">
+                <div className="font-bold text-slate-800 text-sm">Tidak ada permohonan yang sesuai</div>
+                <p className="text-xs text-slate-500">
+                  Coba ubah kata kunci pencarian atau reset filter yang aktif.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleResetFilters}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-sky-700 text-white rounded-lg text-xs font-semibold"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reset Filter</span>
+                </button>
+              </div>
+            ) : (
+              filteredRecords.map((item) => {
+                const isPfk = item.transaksi === 'PFK';
+                const dayInfo = calculateDaysSinceInput(item);
+                const dayBadgeClass =
+                  dayInfo.urgency === 'completed'
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : dayInfo.urgency === 'overdue'
+                    ? 'bg-rose-50 text-rose-800 border-rose-300'
+                    : dayInfo.urgency === 'warning'
+                    ? 'bg-amber-50 text-amber-900 border-amber-300'
+                    : 'bg-sky-50 text-sky-900 border-sky-200';
+
+                return (
+                  <div
+                    key={`mobile-${item.id}`}
+                    className={`bg-white border rounded-xl p-3.5 shadow-xs space-y-2.5 ${
+                      isPfk ? 'border-amber-300 bg-amber-50/20' : 'border-slate-200'
+                    }`}
+                  >
+                    {/* Row 1: Transaksi + No Nodin + Day Counter + Status */}
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <TransaksiBadge transaksi={item.transaksi} />
+                        <span className="font-mono text-[11px] font-bold text-slate-700 truncate">
+                          {highlightMatch(item.noNodin, searchTerm)}
+                        </span>
                       </div>
-                    </td>
-                  </tr>
-                ) : (
-                  filteredRecords.map((item) => {
-                    const isPfk = item.transaksi === 'PFK';
-                    return (
-                      <tr
-                        key={item.id}
-                        className={`hover:bg-sky-50/60 transition ${
-                          isPfk ? 'bg-amber-50/30' : ''
-                        }`}
-                      >
-                        <td className="py-3 px-3 font-mono">
-                          <div className="font-bold text-slate-900">{highlightMatch(item.noNodin, searchTerm)}</div>
-                          <div className="text-[10px] text-slate-400">ID: {item.id}</div>
-                        </td>
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-bold ${dayBadgeClass}`}
+                          title={dayInfo.fullLabel}
+                        >
+                          <Clock className="w-3 h-3 shrink-0" />
+                          <span>{dayInfo.shortLabel}</span>
+                        </span>
+                        <StatusWorkflowBadge status={item.status} />
+                      </div>
+                    </div>
 
-                        <td className="py-3 px-3">
-                          <StatusWorkflowBadge status={item.status} />
-                        </td>
+                    {/* Row 2: Project Name & Address */}
+                    <div>
+                      <div className="font-bold text-sm text-slate-900 leading-snug">
+                        {highlightMatch(item.projectName, searchTerm)}
+                      </div>
+                      <div className="text-xs text-slate-500 flex items-center gap-1 mt-0.5 line-clamp-1">
+                        <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
+                        <span>{item.alamat}</span>
+                      </div>
+                    </div>
 
-                        <td className="py-3 px-3 max-w-xs md:max-w-sm xl:max-w-md">
-                          <div className="font-bold text-slate-900 line-clamp-1">{highlightMatch(item.projectName, searchTerm)}</div>
-                          <div className="text-[11px] text-slate-500 line-clamp-1 flex items-center gap-1">
-                            <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
-                            {item.alamat}
-                          </div>
-                          <div className="text-[10px] text-sky-800 font-medium">{item.peruntukan}</div>
-                        </td>
+                    {/* Row 3: Compact 2-Column Field Data */}
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 text-xs">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block">Daya &amp; Tarif</span>
+                        <span className="font-bold text-slate-900">{formatPowerVA(item.dayaBaru)}</span>
+                        <span className="text-[11px] text-slate-500 block">{item.tarif} • {item.meter}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block">Gardu / Tiang / IDPEL</span>
+                        <span className="font-mono font-semibold text-slate-800 block truncate">
+                          {item.nomorGardu ? `Gardu: ${item.nomorGardu}` : `IDPEL: ${item.idPel || '-'}`}
+                        </span>
+                        <span className="font-mono text-[11px] text-sky-800 block truncate">
+                          Tiang: {item.nomorTiang || 'Belum survei'}
+                        </span>
+                      </div>
+                    </div>
 
-                        <td className="py-3 px-3">
-                          <TransaksiBadge transaksi={item.transaksi} />
-                        </td>
+                    {/* Row 4: RAB Status & Action Buttons */}
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                      <div className="text-xs">
+                        <span className="text-[10px] text-slate-400 block">Nilai RAB</span>
+                        {item.rab && item.rab > 0 ? (
+                          <span className="font-bold text-slate-900">{formatRupiah(item.rab)}</span>
+                        ) : (
+                          <span className="text-[11px] font-semibold text-amber-800">
+                            {item.status === 'SURVEI' ? 'Belum Buat RAB' : 'Rp 0'}
+                          </span>
+                        )}
+                      </div>
 
-                        <td className="py-3 px-3">
-                          <div className="font-bold text-slate-900">
-                            {formatPowerVA(item.dayaBaru)}
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            {item.tarif} • {item.meter}
-                          </div>
-                        </td>
-
-                        <td className="py-3 px-3 font-mono">
-                          <div className="text-slate-900 font-semibold">{highlightMatch(item.idPel || '-', searchTerm)}</div>
-                          <div className="text-[10px] text-sky-800">
-                            Tiang: {item.nomorTiang || '(Belum disurvei)'}
-                          </div>
-                        </td>
-
-                        <td className="py-3 px-3 font-semibold text-slate-800">
-                          {formatRupiah(item.rab)}
-                        </td>
-
-                        <td className="py-3 px-3 text-[11px]">
-                          <div className="truncate text-purple-900 font-medium">
-                            WP: {item.workingPermit ? '✓ Terbit' : '-'}
-                          </div>
-                          <div className="truncate text-emerald-900 font-medium">
-                            Segel: {item.nomorSeriSegel || item.validasiSegel ? '✓ Terpasang' : '-'}
-                          </div>
-                          <div className="truncate text-[10px] font-semibold mt-0.5">
-                            {(item.fotoMeterSebelum || item.fotoKwhMeterLama) &&
-                            (item.fotoMeterSesudah || item.fotoKwhMeterBaru) &&
-                            item.idPelTetangga ? (
-                              <span className="text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200">
-                                PDL: Berkas Lengkap
-                              </span>
-                            ) : item.status === 'NYALA' ? (
-                              <span className="text-amber-800 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">
-                                PDL: Menunggu Foto TE
-                              </span>
-                            ) : null}
-                          </div>
-                        </td>
-
-                        <td className="py-3 px-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              onClick={() => onSelectRecord(item)}
-                              className="p-1.5 text-slate-600 hover:text-sky-800 hover:bg-slate-100 rounded-md transition"
-                              title="Lihat Detail Dossier"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => onOpenWorkflowAction(item)}
-                              className="px-2.5 py-1 bg-sky-700 hover:bg-sky-800 text-white rounded-md text-[11px] font-bold shadow-xs transition flex items-center gap-1"
-                              title="Update Tahapan"
-                            >
-                              <span>Proses</span>
-                              <ChevronRight className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onSelectRecord(item)}
+                          className="px-3 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Detail</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onOpenWorkflowAction(item)}
+                          className="px-3.5 py-2 bg-sky-700 hover:bg-sky-800 text-white rounded-lg text-xs font-bold shadow-2xs flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>Proses</span>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
-        </div>
+
+          {/* B. DESKTOP TABLE VIEW (md+) */}
+          <div className="hidden md:block bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 uppercase tracking-wider text-[11px] font-bold">
+                    <th className="py-3 px-3">No Nodin &amp; Durasi Hari</th>
+                    <th className="py-3 px-3">Status Progres</th>
+                    <th className="py-3 px-3">Nama Pemohon &amp; Alamat</th>
+                    <th className="py-3 px-3">Transaksi</th>
+                    <th className="py-3 px-3">Daya &amp; Tarif</th>
+                    <th className="py-3 px-3">IDPEL / Tiang</th>
+                    <th className="py-3 px-3">RAB (Rp)</th>
+                    <th className="py-3 px-3">K3L &amp; TE</th>
+                    <th className="py-3 px-3 text-right">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredRecords.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="py-14 text-center text-slate-500">
+                        <div className="max-w-md mx-auto space-y-2">
+                          <div className="w-12 h-12 mx-auto bg-slate-100 text-slate-400 rounded-full flex items-center justify-center">
+                            <Search className="w-6 h-6 text-slate-400" />
+                          </div>
+                          <div className="font-bold text-slate-800 text-sm">Tidak ada permohonan yang sesuai</div>
+                          <div className="text-xs text-slate-500">
+                            {searchTerm.trim() ? (
+                              <>
+                                Tidak ditemukan permohonan dengan kata kunci{' '}
+                                <span className="font-semibold text-slate-800">&ldquo;{searchTerm}&rdquo;</span>.
+                              </>
+                            ) : (
+                              'Tidak ada permohonan yang cocok dengan kombinasi filter yang dipilih.'
+                            )}
+                          </div>
+                          <div className="pt-2">
+                            <button
+                              type="button"
+                              onClick={handleResetFilters}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-sky-700 hover:bg-sky-800 text-white rounded-lg text-xs font-semibold shadow-xs transition"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              <span>Reset Semua Filter &amp; Pencarian</span>
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredRecords.map((item) => {
+                      const isPfk = item.transaksi === 'PFK';
+                      const dayInfo = calculateDaysSinceInput(item);
+                      const dayBadgeClass =
+                        dayInfo.urgency === 'completed'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : dayInfo.urgency === 'overdue'
+                          ? 'bg-rose-50 text-rose-800 border-rose-300'
+                          : dayInfo.urgency === 'warning'
+                          ? 'bg-amber-50 text-amber-900 border-amber-300'
+                          : 'bg-sky-50 text-sky-900 border-sky-200';
+
+                      return (
+                        <tr
+                          key={item.id}
+                          className={`hover:bg-sky-50/60 transition ${
+                            isPfk ? 'bg-amber-50/30' : ''
+                          }`}
+                        >
+                          <td className="py-3 px-3">
+                            <div className="font-mono font-bold text-slate-900">{highlightMatch(item.noNodin, searchTerm)}</div>
+                            <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                              <span
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-bold ${dayBadgeClass}`}
+                                title={dayInfo.fullLabel}
+                              >
+                                <Clock className="w-2.5 h-2.5 shrink-0" />
+                                <span>{dayInfo.shortLabel}</span>
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                              Input: {dayInfo.inputDate}
+                            </div>
+                          </td>
+
+                          <td className="py-3 px-3">
+                            <StatusWorkflowBadge status={item.status} />
+                          </td>
+
+                          <td className="py-3 px-3 max-w-xs md:max-w-sm xl:max-w-md">
+                            <div className="font-bold text-slate-900 line-clamp-1">{highlightMatch(item.projectName, searchTerm)}</div>
+                            <div className="text-[11px] text-slate-500 line-clamp-1 flex items-center gap-1">
+                              <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
+                              {item.alamat}
+                            </div>
+                            <div className="text-[10px] text-sky-800 font-medium">{item.peruntukan}</div>
+                          </td>
+
+                          <td className="py-3 px-3">
+                            <TransaksiBadge transaksi={item.transaksi} />
+                          </td>
+
+                          <td className="py-3 px-3">
+                            <div className="font-bold text-slate-900">
+                              {formatPowerVA(item.dayaBaru)}
+                            </div>
+                            <div className="text-[10px] text-slate-500">
+                              {item.tarif} • {item.meter}
+                            </div>
+                          </td>
+
+                          <td className="py-3 px-3 font-mono">
+                            <div className="text-slate-900 font-semibold">{highlightMatch(item.idPel || '-', searchTerm)}</div>
+                            {item.nomorGardu && (
+                              <div className="text-[10px] font-bold text-amber-800">
+                                Gardu: {highlightMatch(item.nomorGardu, searchTerm)}
+                              </div>
+                            )}
+                            <div className="text-[10px] text-sky-800">
+                              Tiang: {item.nomorTiang || '(Belum disurvei)'}
+                            </div>
+                          </td>
+
+                          <td className="py-3 px-3 font-semibold text-slate-800">
+                            <div>{formatRupiah(item.rab)}</div>
+                            {(!item.rab || item.rab === 0) && (
+                              <div className="text-[10px] font-semibold text-amber-800 mt-0.5">
+                                {item.status === 'SURVEI' ? 'Sudah Survei • Belum Buat RAB' : 'Belum Ada RAB'}
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="py-3 px-3 text-[11px]">
+                            <div className="truncate text-purple-900 font-medium">
+                              WP: {item.workingPermit ? '✓ Terbit' : '-'}
+                            </div>
+                            <div className="truncate text-emerald-900 font-medium">
+                              Segel: {item.nomorSeriSegel || item.validasiSegel ? '✓ Terpasang' : '-'}
+                            </div>
+                            <div className="truncate text-[10px] font-semibold mt-0.5">
+                              {(item.fotoMeterSebelum || item.fotoKwhMeterLama) &&
+                              (item.fotoMeterSesudah || item.fotoKwhMeterBaru) &&
+                              item.idPelTetangga ? (
+                                <span className="text-emerald-700">
+                                  PDL: Berkas Lengkap
+                                </span>
+                              ) : item.status === 'NYALA' ? (
+                                <span className="text-amber-800">
+                                  PDL: Menunggu Foto TE
+                                </span>
+                              ) : null}
+                            </div>
+                          </td>
+
+                          <td className="py-3 px-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => onSelectRecord(item)}
+                                className="p-1.5 text-slate-600 hover:text-sky-800 hover:bg-slate-100 rounded-md transition cursor-pointer"
+                                title="Lihat Detail Dossier"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => onOpenWorkflowAction(item)}
+                                className="px-2.5 py-1 bg-sky-700 hover:bg-sky-800 text-white rounded-md text-[11px] font-bold shadow-xs transition flex items-center gap-1 cursor-pointer"
+                                title="Update Tahapan"
+                              >
+                                <span>Proses</span>
+                                <ChevronRight className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
 
       {/* VIEW 2: KANBAN WORKFLOW BOARD */}
       {viewMode === 'kanban' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-3 overflow-x-auto pb-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-8 gap-3 overflow-x-auto pb-4">
           {kanbanColumns.map((colStatus) => {
             const colItems = filteredRecords.filter((r) => r.status === colStatus);
             return (
@@ -1046,16 +1088,32 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                   {colItems.length === 0 ? (
                     <div className="text-center py-8 text-xs text-slate-400 italic">Kosong</div>
                   ) : (
-                    colItems.map((item) => (
-                      <div
-                        key={item.id}
-                        onClick={() => onSelectRecord(item)}
-                        className="p-3 bg-white border border-slate-200 hover:border-sky-400 rounded-lg shadow-xs cursor-pointer hover:shadow-sm transition space-y-2"
-                      >
-                        <div className="flex items-center justify-between">
-                          <TransaksiBadge transaksi={item.transaksi} />
-                          <span className="text-[10px] font-mono text-slate-400">{item.id}</span>
-                        </div>
+                    colItems.map((item) => {
+                      const dayInfo = calculateDaysSinceInput(item);
+                      return (
+                        <div
+                          key={item.id}
+                          onClick={() => onSelectRecord(item)}
+                          className="p-3 bg-white border border-slate-200 hover:border-sky-400 rounded-lg shadow-xs cursor-pointer hover:shadow-sm transition space-y-2"
+                        >
+                          <div className="flex items-center justify-between gap-1">
+                            <TransaksiBadge transaksi={item.transaksi} />
+                            <span
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-bold ${
+                                dayInfo.urgency === 'completed'
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                  : dayInfo.urgency === 'overdue'
+                                  ? 'bg-rose-50 text-rose-800 border-rose-300'
+                                  : dayInfo.urgency === 'warning'
+                                  ? 'bg-amber-50 text-amber-900 border-amber-300'
+                                  : 'bg-sky-50 text-sky-900 border-sky-200'
+                              }`}
+                              title={dayInfo.fullLabel}
+                            >
+                              <Clock className="w-2.5 h-2.5 shrink-0" />
+                              <span>{dayInfo.shortLabel}</span>
+                            </span>
+                          </div>
 
                         <div>
                           <div className="font-bold text-xs text-slate-900 line-clamp-2">
@@ -1071,22 +1129,23 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                           <span className="text-slate-600 font-mono text-[10px]">{item.tarif}</span>
                         </div>
 
-                        <div className="flex items-center justify-between pt-1 text-[10px]">
-                          <span className="text-slate-500">
-                            Tiang: {item.nomorTiang ? item.nomorTiang.split('/')[0] : '-'}
-                          </span>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onOpenWorkflowAction(item);
-                            }}
-                            className="text-sky-700 hover:underline font-bold flex items-center"
-                          >
-                            Proses &gt;
-                          </button>
+                          <div className="flex items-center justify-between pt-1 text-[10px]">
+                            <span className="text-slate-500">
+                              Tiang: {item.nomorTiang ? item.nomorTiang.split('/')[0] : '-'}
+                            </span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenWorkflowAction(item);
+                              }}
+                              className="text-sky-700 hover:underline font-bold flex items-center"
+                            >
+                              Proses &gt;
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>

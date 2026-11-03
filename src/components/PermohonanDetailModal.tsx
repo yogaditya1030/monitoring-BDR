@@ -1,7 +1,7 @@
 import React from 'react';
 import { PermohonanItem, UserRole } from '../types';
 import { StatusWorkflowBadge, TransaksiBadge } from './StatusWorkflowBadge';
-import { formatRupiah, formatPowerVA } from '../utils/plnValidation';
+import { formatRupiah, formatPowerVA, formatTeStandSummary, calculateDaysSinceInput } from '../utils/plnValidation';
 import {
   X,
   MapPin,
@@ -36,9 +36,32 @@ export const PermohonanDetailModal: React.FC<DetailModalProps> = ({
 }) => {
   if (!isOpen || !item) return null;
 
+  const dayInfo = calculateDaysSinceInput(item);
+  const dayBadgeClass =
+    dayInfo.urgency === 'completed'
+      ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+      : dayInfo.urgency === 'overdue'
+      ? 'bg-rose-50 text-rose-800 border-rose-300'
+      : dayInfo.urgency === 'warning'
+      ? 'bg-amber-50 text-amber-900 border-amber-300'
+      : 'bg-sky-50 text-sky-900 border-sky-300';
+
   const milestoneSteps = [
     { label: 'Registrasi Permohonan', date: item.tglSurat || item.createdAt.split('T')[0], done: true },
-    { label: 'Survei Teknik & RAB', date: item.tglSurvei, done: !!item.tglSurvei || item.status !== 'MOHON' },
+    {
+      label: 'Survei Lapangan',
+      date: item.tglSurvei,
+      done:
+        Boolean(item.tglSurvei || item.nomorTiang || item.nomorGardu) ||
+        ['RAB', 'TANPA PERLUASAN', 'BAYAR', 'KERJA', 'NYALA', 'PDL'].includes(item.status),
+    },
+    {
+      label: 'Penyusunan RAB',
+      date: item.tglRab || (item.rab > 0 ? item.tglSurvei : ''),
+      done:
+        (item.rab > 0 && item.status !== 'SURVEI' && item.status !== 'MOHON') ||
+        ['TANPA PERLUASAN', 'BAYAR', 'KERJA', 'NYALA', 'PDL'].includes(item.status),
+    },
     { label: 'Pembayaran BP / SIP', date: item.tglBayarBp, done: !!item.tglBayarBp || ['KERJA', 'NYALA', 'PDL'].includes(item.status) },
     { label: 'Working Permit & Eksekusi', date: item.tglWorkingPermit || item.tglKerja, done: !!item.workingPermit || ['NYALA', 'PDL'].includes(item.status) },
     { label: 'Komisioning TE & Nyala', date: item.tglPenyalaan, done: !!item.tglPenyalaan || item.status === 'PDL' },
@@ -67,9 +90,18 @@ export const PermohonanDetailModal: React.FC<DetailModalProps> = ({
         <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
           {/* Status & Action Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-slate-50 border border-slate-200 rounded-lg">
-            <div>
-              <div className="text-xs text-slate-500 font-semibold mb-1">Status Progres Saat Ini:</div>
-              <StatusWorkflowBadge status={item.status} showRoleInfo={true} />
+            <div className="flex flex-wrap items-center gap-4">
+              <div>
+                <div className="text-xs text-slate-500 font-semibold mb-1">Status Progres Saat Ini:</div>
+                <StatusWorkflowBadge status={item.status} showRoleInfo={true} />
+              </div>
+              <div className="sm:border-l sm:border-slate-200 sm:pl-4">
+                <div className="text-xs text-slate-500 font-semibold mb-1">Counter Hari Sejak Input Surat:</div>
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-bold ${dayBadgeClass}`}>
+                  <Clock className="w-3.5 h-3.5 shrink-0" />
+                  <span>{dayInfo.fullLabel}</span>
+                </span>
+              </div>
             </div>
 
             <button
@@ -87,9 +119,9 @@ export const PermohonanDetailModal: React.FC<DetailModalProps> = ({
           {/* Workflow Progress Timeline */}
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3">
-              Tahapan Pekerjaan Terpadu (SLA Monitoring)
+              Tahapan Pekerjaan Terpadu (Survei &amp; RAB Terpisah)
             </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-7 gap-2">
               {milestoneSteps.map((st, i) => (
                 <div
                   key={st.label}
@@ -125,6 +157,12 @@ export const PermohonanDetailModal: React.FC<DetailModalProps> = ({
                 <User className="w-4 h-4 text-sky-700" />
                 Data Pelanggan & Layanan
               </h4>
+              <div className="grid grid-cols-3 gap-1">
+                <span className="text-slate-500">Tgl Input &amp; Durasi:</span>
+                <span className="col-span-2 font-mono font-bold text-sky-900">
+                  {dayInfo.inputDate} ({dayInfo.shortLabel})
+                </span>
+              </div>
               <div className="grid grid-cols-3 gap-1">
                 <span className="text-slate-500">ID Pelanggan (IDPEL):</span>
                 <span className="col-span-2 font-mono font-bold text-slate-900">
@@ -167,15 +205,29 @@ export const PermohonanDetailModal: React.FC<DetailModalProps> = ({
               )}
             </div>
 
-            {/* Box 2: Technical, Pole & Map */}
+            {/* Box 2: Technical, Gardu, Pole & Map */}
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-2.5 text-xs">
               <h4 className="font-bold text-slate-800 flex items-center gap-1.5 text-xs uppercase tracking-wide border-b border-slate-200 pb-2">
                 <Wrench className="w-4 h-4 text-amber-600" />
-                Data Teknis & Jaringan Distribusi
+                Data Survei Lapangan &amp; Penyusunan RAB
               </h4>
+              <div className="grid grid-cols-3 gap-1">
+                <span className="text-slate-500">Status Survei:</span>
+                <span className="col-span-2 font-bold text-amber-900">
+                  {item.tglSurvei || item.nomorTiang || item.nomorGardu
+                    ? `✓ Sudah Survei (${item.tglSurvei || 'Selesai'})`
+                    : '⏳ Menunggu Survei Lapangan'}
+                </span>
+              </div>
               <div className="grid grid-cols-3 gap-1">
                 <span className="text-slate-500">Petugas Survei:</span>
                 <span className="col-span-2 font-medium text-slate-800">{item.petugasSurvei || '(Belum disurvei)'}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                <span className="text-slate-500">Nomor Gardu PLN:</span>
+                <span className="col-span-2 font-mono font-bold text-amber-950">
+                  {item.nomorGardu || '(Belum terdata gardu)'}
+                </span>
               </div>
               <div className="grid grid-cols-3 gap-1">
                 <span className="text-slate-500">Nomor Tiang PLN:</span>
@@ -191,9 +243,15 @@ export const PermohonanDetailModal: React.FC<DetailModalProps> = ({
                 </span>
               </div>
               <div className="grid grid-cols-3 gap-1">
-                <span className="text-slate-500">Nilai RAB:</span>
-                <span className="col-span-2 font-bold text-emerald-800">
-                  {formatRupiah(item.rab)}
+                <span className="text-slate-500">Status &amp; Nilai RAB:</span>
+                <span className="col-span-2 font-bold">
+                  {item.rab && item.rab > 0 ? (
+                    <span className="text-emerald-800">✓ {formatRupiah(item.rab)}</span>
+                  ) : (
+                    <span className="text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 text-[11px]">
+                      ⚠️ Belum Dibuat RAB (Rp 0)
+                    </span>
+                  )}
                 </span>
               </div>
               <div className="grid grid-cols-3 gap-1">
@@ -263,9 +321,15 @@ export const PermohonanDetailModal: React.FC<DetailModalProps> = ({
                   </span>
                 </div>
                 <div className="grid grid-cols-3 gap-1">
-                  <span className="text-slate-500">Merk / Stand:</span>
+                  <span className="text-slate-500">Merk &amp; Rasio CT:</span>
                   <span className="col-span-2 text-slate-800">
-                    {item.merkKwh || '-'} (Stand: {item.standKwhAwal ?? 0} kWh)
+                    {item.merkKwh || '-'} ({item.rasioCt || 'Direct'})
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-1 sm:col-span-2">
+                  <span className="text-slate-500">Stand Meter TE:</span>
+                  <span className="col-span-2 font-mono font-bold text-emerald-900">
+                    {formatTeStandSummary(item)}
                   </span>
                 </div>
                 <div className="grid grid-cols-3 gap-1">

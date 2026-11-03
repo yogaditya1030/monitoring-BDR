@@ -6,6 +6,7 @@ import {
   calculateBiayaPenyambungan,
   determineInitialWorkflow,
   formatRupiah,
+  buildTeknikWaNotification,
 } from '../utils/plnValidation';
 import { queryPlnCentralApi } from '../services/mockApiValidation';
 import { MapLocationPicker } from './MapLocationPicker';
@@ -34,7 +35,11 @@ import {
 interface QuickIntakeModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (newRecord: PermohonanItem, syncToSheets: boolean) => void;
+  onSubmit: (
+    newRecord: PermohonanItem,
+    syncToSheets: boolean,
+    waOptions?: { sendToTeknik: boolean; teknikPhone: string }
+  ) => void;
   isSheetsConnected: boolean;
 }
 
@@ -58,6 +63,7 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
   const [idPel, setIdPel] = useState('');
   const [nomorMeterEksisting, setNomorMeterEksisting] = useState('');
   const [noNodin, setNoNodin] = useState('');
+  const [tglSurat, setTglSurat] = useState(() => new Date().toISOString().split('T')[0]);
   const [keterangan, setKeterangan] = useState('');
   const [coordinates, setCoordinates] = useState('-7.6079, 110.2038');
   const [syncToSheets, setSyncToSheets] = useState(true);
@@ -73,9 +79,13 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
   });
   const [isQueryingApi, setIsQueryingApi] = useState(false);
   const [attachedFileName, setAttachedFileName] = useState<string>('');
+  const [attachedFileDataUrl, setAttachedFileDataUrl] = useState<string>('');
   const [ktpFileName, setKtpFileName] = useState<string>('');
   const [ktpPreviewUrl, setKtpPreviewUrl] = useState<string>('');
-  const [showWaPreview, setShowWaPreview] = useState(false);
+  const [showWaPreview, setShowWaPreview] = useState(true);
+  const [sendWaToTeknik, setSendWaToTeknik] = useState(true);
+  const [teknikWaPhone, setTeknikWaPhone] = useState('08112500123');
+  const [formError, setFormError] = useState<string>('');
 
   // Conditional logic per user requirements:
   // - PB: form input IDPEL dihilangkan
@@ -147,32 +157,62 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
     }
   };
 
+  const liveMapsUrl = `https://www.google.com/maps?q=${coordinates.replace(/\s/g, '')}`;
+  const liveWaPayload = buildTeknikWaNotification(
+    {
+      noNodin: noNodin.trim() || `NODIN-${new Date().getFullYear()}-AUTO`,
+      transaksi,
+      kategoriPfk: transaksi === 'PFK' ? kategoriPfk : undefined,
+      status: workflowRouting.initialStatus,
+      projectName: projectName.trim() || '[Nama Pelanggan]',
+      kontakPerson: kontakPerson.trim() || '[No. HP Pelanggan]',
+      nomorKtp: nomorKtp.trim() || '-',
+      idPel: idPel.trim(),
+      dayaLama: transaksi === 'PB' ? 0 : Number(dayaLama),
+      dayaBaru: Number(dayaBaru),
+      tarif,
+      meter,
+      peruntukan: peruntukan.trim(),
+      alamat: alamat.trim() || '[Alamat Lokasi Pelanggan]',
+      tagingLokasi: coordinates.trim(),
+      linkMap: liveMapsUrl,
+      tglSurat,
+      keteranganPekerjaan: keterangan.trim(),
+    },
+    teknikWaPhone
+  );
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError('');
 
     if (!projectName.trim()) {
-      alert('Nama Pemohon / Proyek wajib diisi.');
+      setFormError('Nama Pemohon / Proyek wajib diisi.');
       return;
     }
     if (!nomorKtp.trim() || nomorKtp.replace(/\D/g, '').length !== 16) {
-      alert('Nomor KTP (NIK 16 digit) wajib diisi dengan benar.');
+      setFormError('Nomor KTP (NIK 16 digit) wajib diisi dengan benar.');
+      return;
+    }
+    if (!kontakPerson.trim()) {
+      setFormError('Nomor Kontak / WhatsApp Pelanggan wajib diisi agar Tim Teknik mudah menghubungi saat survei.');
       return;
     }
     if (!alamat.trim()) {
-      alert('Alamat lokasi wajib diisi.');
+      setFormError('Alamat lokasi wajib diisi.');
       return;
     }
 
     // Validation for PD
     if (transaksi === 'PD' && !idPelFeedback.isValid) {
-      alert(idPelFeedback.message);
+      setFormError(idPelFeedback.message);
       return;
     }
 
     // Validation for PFK Meter
     if (transaksi === 'PFK' && kategoriPfk === 'Meter') {
       if (!idPel.trim() && !nomorMeterEksisting.trim()) {
-        alert('Untuk permohonan PFK kategori Meter, silakan isi IDPEL atau Nomor Meter.');
+        setFormError('Untuk permohonan PFK kategori Meter, silakan isi IDPEL atau Nomor Meter.');
         return;
       }
     }
@@ -191,6 +231,8 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
       (transaksi === 'PFK'
         ? `PFK ${kategoriPfk}: Permohonan daya ${dayaBaru.toLocaleString('id-ID')} VA (${tarif})`
         : `${transaksi} daya ${dayaBaru.toLocaleString('id-ID')} VA (${tarif})`);
+
+    const mapsLink = `https://www.google.com/maps?q=${coordinates.replace(/\s/g, '')}`;
 
     const newRecord: PermohonanItem = {
       id: randomId,
@@ -211,7 +253,8 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
       nomorKtp: nomorKtp.trim(),
       fotoKtpNpwp: ktpFileName || 'KTP_Pelanggan_Terlampir.jpg',
       suratPermohonan: attachedFileName || `Surat_Permohonan_${projectName.replace(/\s+/g, '_')}.pdf`,
-      tglSurat: new Date().toISOString().split('T')[0],
+      suratPermohonanDataUrl: attachedFileDataUrl || undefined,
+      tglSurat: tglSurat || new Date().toISOString().split('T')[0],
       petugasSurvei: transaksi === 'PFK' ? 'Tim Piket Teknik ULP Borobudur' : '',
       tagingLokasi: coordinates.trim(),
       nomorTiang: '',
@@ -220,12 +263,12 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
       keteranganPekerjaan: descWork,
       keteranganStatus:
         transaksi === 'PFK'
-          ? `Jalur Cepat PFK (${kategoriPfk}): Langsung diteruskan ke tim Teknik untuk survei segera`
-          : 'Menunggu verifikasi berkas oleh Pelayanan Pelanggan (PP)',
+          ? `Permohonan PFK (${kategoriPfk}): Notifikasi WA Survei telah dikirim ke Tim Teknik`
+          : 'Notifikasi WA Survei diteruskan ke Tim Teknik & menunggu verifikasi PP',
       keteranganKendala: '-',
-      linkMap: `https://www.google.com/maps?q=${coordinates.replace(/\s/g, '')}`,
+      linkMap: mapsLink,
       tglSurvei: '',
-      rab: transaksi === 'PFK' ? 0 : calculation.totalEstimasi,
+      rab: 0,
       biayaBp: transaksi === 'PFK' ? 0 : calculation.biayaPenyambungan,
       biayaUjl: transaksi === 'PFK' ? 0 : calculation.ujlToken,
       noPkVendor: '',
@@ -239,13 +282,16 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
           timestamp: new Date().toISOString(),
           actor: 'Security / Front Desk',
           role: 'security',
-          action: `Pendaftaran Permohonan (${transaksi}${transaksi === 'PFK' ? ` - ${kategoriPfk}` : ''})`,
-          notes: `${workflowRouting.routingSummary} • Lokasi Map: ${coordinates}`,
+          action: `Pendaftaran Permohonan (${transaksi}${transaksi === 'PFK' ? ` - ${kategoriPfk}` : ''}) & Notifikasi WA Tim Teknik`,
+          notes: `${workflowRouting.routingSummary} • WA Tim Teknik (${teknikWaPhone}) berisi No. HP Pelanggan (${kontakPerson.trim()}) & Maps (${mapsLink})`,
         },
       ],
     };
 
-    onSubmit(newRecord, syncToSheets);
+    onSubmit(newRecord, syncToSheets, {
+      sendToTeknik: sendWaToTeknik,
+      teknikPhone: teknikWaPhone,
+    });
     onClose();
   };
 
@@ -336,9 +382,6 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
                   <span className="text-amber-900 font-extrabold flex items-center gap-1">
                     ⚡ PFK
                   </span>
-                  <span className="text-xs px-2 py-0.5 rounded bg-amber-200 text-amber-900 font-bold">
-                    Jalur Kilat
-                  </span>
                 </div>
                 <div className="text-xs text-slate-600 mt-1">
                   <strong>PFK</strong>: Langsung diteruskan ke Tim Teknik untuk survei segera.
@@ -417,7 +460,7 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
               <div className="text-xs">
                 <div className="font-bold">
                   {transaksi === 'PFK'
-                    ? `JALUR KILAT PFK (${kategoriPfk}): Langsung Terhubung ke Tim Teknik ULP Borobudur`
+                    ? `ALUR PFK (${kategoriPfk}): Langsung Terhubung ke Tim Teknik ULP Borobudur`
                     : 'ALUR PBPD: Verifikasi Dokumen oleh Pelayanan Pelanggan (PP)'}
                 </div>
                 <div className="text-slate-600 mt-0.5">{workflowRouting.routingSummary}</div>
@@ -546,7 +589,7 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Peruntukan Bangunan
@@ -567,6 +610,22 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
                   </option>
                   <option value="Pertanian / Peternakan">Pertanian / Peternakan</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Tanggal Input Surat Permohonan *
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={tglSurat}
+                  onChange={(e) => setTglSurat(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-sky-500 focus:outline-hidden font-mono"
+                />
+                <span className="text-[10px] text-sky-700 block mt-0.5">
+                  ⏱️ Titik awal perhitungan Counter Hari
+                </span>
               </div>
 
               <div>
@@ -729,7 +788,9 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
                   <option value="R-2/TR">R-2/TR (Rumah Tangga Sedang)</option>
                   <option value="B-1/TR">B-1/TR (Bisnis Kecil)</option>
                   <option value="B-2/TR">B-2/TR (Bisnis Menengah)</option>
-                  <option value="I-2/TR">I-2/TR (Industri)</option>
+                  <option value="I-1/TR">I-1/TR (Industri Kecil)</option>
+                  <option value="I-2/TR">I-2/TR (Industri Menengah)</option>
+                  <option value="I-3/TM">I-3/TM (Industri TM)</option>
                   <option value="S-1/TR">S-1/TR (Sosial Murni)</option>
                   <option value="S-2/TR">S-2/TR (Sosial Lembaga)</option>
                   <option value="P-1/TR">P-1/TR (Pemerintah)</option>
@@ -812,10 +873,20 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
                 <input
                   type="file"
                   id="file-upload"
+                  accept="image/*,.pdf"
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) setAttachedFileName(f.name);
+                    if (f) {
+                      setAttachedFileName(f.name);
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                        if (typeof reader.result === 'string') {
+                          setAttachedFileDataUrl(reader.result);
+                        }
+                      };
+                      reader.readAsDataURL(f);
+                    }
                   }}
                 />
                 <label htmlFor="file-upload" className="cursor-pointer">
@@ -829,10 +900,64 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
 
             <div className="space-y-3">
               <label className="block text-xs font-semibold text-slate-700">
-                Integrasi & Notifikasi
+                6. Integrasi &amp; Notifikasi WhatsApp Tim Teknik
               </label>
-              
-              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+
+              <label className="flex items-start gap-2 text-xs text-slate-800 cursor-pointer bg-emerald-50/80 border border-emerald-200 p-2.5 rounded-lg">
+                <input
+                  type="checkbox"
+                  checked={sendWaToTeknik}
+                  onChange={(e) => setSendWaToTeknik(e.target.checked)}
+                  className="rounded text-emerald-600 focus:ring-emerald-500 mt-0.5"
+                />
+                <span className="leading-snug">
+                  <strong className="text-emerald-950 block">
+                    Kirim Notifikasi WA ke Tim Teknik saat disimpan
+                  </strong>
+                  <span className="text-[11px] text-emerald-800">
+                    Berisi informasi pelanggan, No. HP pelanggan ({kontakPerson || 'belum diisi'}), dan link Google Maps titik survei.
+                  </span>
+                </span>
+              </label>
+
+              {sendWaToTeknik && (
+                <div className="space-y-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Nomor WhatsApp Tim Teknik / Piket Survei ULP Borobudur:
+                    </label>
+                    <div className="relative">
+                      <Phone className="w-3.5 h-3.5 text-emerald-600 absolute left-2.5 top-2.5" />
+                      <input
+                        type="tel"
+                        value={teknikWaPhone}
+                        onChange={(e) => setTeknikWaPhone(e.target.value)}
+                        placeholder="Contoh: 08112500123"
+                        className="w-full pl-8 pr-3 py-1.5 border border-slate-300 rounded-md text-xs font-mono bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowWaPreview(!showWaPreview)}
+                    className="text-xs text-emerald-700 hover:text-emerald-800 font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5 text-emerald-600" />
+                    {showWaPreview
+                      ? 'Sembunyikan draf WA Tim Teknik'
+                      : 'Lihat draf WA ke Tim Teknik (Info Pelanggan, No. HP & Maps)'}
+                  </button>
+
+                  {showWaPreview && (
+                    <div className="p-2.5 bg-emerald-950 text-emerald-100 border border-emerald-800 rounded-lg text-[11px] space-y-1 font-mono whitespace-pre-wrap max-h-44 overflow-y-auto">
+                      {liveWaPayload.message}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer pt-1">
                 <input
                   type="checkbox"
                   checked={syncToSheets}
@@ -844,34 +969,15 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
                   Sinkronkan baris ini secara otomatis ke Google Sheets
                 </span>
               </label>
-
-              <button
-                type="button"
-                onClick={() => setShowWaPreview(!showWaPreview)}
-                className="text-xs text-sky-700 hover:text-sky-800 font-medium flex items-center gap-1 cursor-pointer"
-              >
-                <Send className="w-3.5 h-3.5 text-emerald-600" />
-                {showWaPreview ? 'Sembunyikan format WA' : 'Lihat draf pesan WhatsApp konfirmasi'}
-              </button>
-
-              {showWaPreview && (
-                <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded text-[11px] text-emerald-950 space-y-1 font-mono">
-                  <p>Yth. Bpk/Ibu {projectName || '[Nama Pelanggan]'},</p>
-                  <p>
-                    Permohonan {transaksi} {transaksi === 'PFK' ? `(${kategoriPfk})` : ''} daya {dayaBaru.toLocaleString('id-ID')} VA telah diregistrasi di <strong>PLN ULP Borobudur, UP3 Magelang, UID Jawa Tengah</strong>.
-                  </p>
-                  <p>NIK: {nomorKtp || '-'}</p>
-                  <p>Titik Koordinat: {coordinates}</p>
-                  {transaksi !== 'PFK' && (
-                    <p>Estimasi Biaya: {formatRupiah(calculation.totalEstimasi)}</p>
-                  )}
-                  <p>
-                    Status: {transaksi === 'PFK' ? 'Survei Lapangan Segera oleh Tim Teknik' : 'Verifikasi Berkas Administrasi PP'}
-                  </p>
-                </div>
-              )}
             </div>
           </div>
+
+          {formError && (
+            <div className="p-3 rounded-lg bg-red-50 border border-red-300 text-red-900 text-xs font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
 
           {/* Modal Footer */}
           <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-slate-200">
@@ -887,7 +993,8 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
               type="submit"
               className="px-5 py-2.5 bg-sky-700 hover:bg-sky-800 text-white rounded-lg text-xs font-bold shadow-md flex items-center gap-2 transition transform active:scale-95 cursor-pointer"
             >
-              <span>Simpan & Teruskan ke Sistem</span>
+              <Send className="w-3.5 h-3.5" />
+              <span>Simpan &amp; Kirim WA ke Tim Teknik</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>

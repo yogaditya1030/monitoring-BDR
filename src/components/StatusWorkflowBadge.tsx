@@ -20,14 +20,23 @@ export const StatusWorkflowBadge: React.FC<StatusBadgeProps> = ({ status, showRo
       role: 'Pelayanan Pelanggan (PP)',
       icon: '📋',
     },
-    'SURVEI/RAB': {
-      label: 'SURVEI / RAB',
+    SURVEI: {
+      label: 'SURVEI (Survei Lapangan)',
       bg: 'bg-amber-50/95 hover:bg-amber-100/90',
       text: 'text-amber-950',
       border: 'border-amber-400/90',
       dot: 'bg-amber-500',
-      role: 'Teknik',
+      role: 'Teknik (Surveyor)',
       icon: '📐',
+    },
+    RAB: {
+      label: 'RAB (Penyusunan RAB)',
+      bg: 'bg-indigo-50/95 hover:bg-indigo-100/90',
+      text: 'text-indigo-950',
+      border: 'border-indigo-400/90',
+      dot: 'bg-indigo-600',
+      role: 'Teknik (Perencanaan RAB)',
+      icon: '🧮',
     },
     'TANPA PERLUASAN': {
       label: 'TANPA PERLUASAN',

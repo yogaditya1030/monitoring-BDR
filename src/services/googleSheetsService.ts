@@ -40,6 +40,7 @@ export const SPREADSHEET_COLUMNS = [
   'TGL SURAT',
   'PETUGAS SURVEI',
   'TAGING LOKASI',
+  'NOMOR GARDU',
   'NOMOR TIANG',
   'ID PEL',
   'ID PEL TETANGGA',
@@ -52,7 +53,8 @@ export const SPREADSHEET_COLUMNS = [
   'WORKING PERMIT',
   'VALIDASI SEGEL',
   'NOMOR KWH BARU',
-  'STAND AWAL',
+  'STAND BONGKAR',
+  'STAND PASANG',
   'NOMOR SERI SEGEL',
   'TGL PENYALAAN',
   'TGL PDL UPDATE',
@@ -106,6 +108,22 @@ export const logoutGoogle = async () => {
 };
 
 export function recordToRow(item: PermohonanItem): (string | number)[] {
+  const standBongkarStr =
+    item.standBongkarWbp !== undefined || item.standBongkarLwbp !== undefined || item.standBongkarKvar !== undefined
+      ? `WBP:${item.standBongkarWbp ?? 0} LWBP:${item.standBongkarLwbp ?? 0} kVar:${item.standBongkarKvar ?? 0}`
+      : item.standBongkar !== undefined
+      ? item.standBongkar
+      : '';
+
+  const standPasangStr =
+    item.standPasangWbp !== undefined || item.standPasangLwbp !== undefined || item.standPasangKvar !== undefined
+      ? `WBP:${item.standPasangWbp ?? 0} LWBP:${item.standPasangLwbp ?? 0} kVar:${item.standPasangKvar ?? 0}`
+      : item.standPasang !== undefined
+      ? item.standPasang
+      : item.standKwhAwal !== undefined
+      ? item.standKwhAwal
+      : '';
+
   return [
     item.id,
     item.noNodin,
@@ -124,6 +142,7 @@ export function recordToRow(item: PermohonanItem): (string | number)[] {
     item.tglSurat,
     item.petugasSurvei,
     item.tagingLokasi,
+    item.nomorGardu || '',
     item.nomorTiang,
     item.idPel,
     item.idPelTetangga,
@@ -136,7 +155,8 @@ export function recordToRow(item: PermohonanItem): (string | number)[] {
     item.workingPermit,
     item.validasiSegel,
     item.nomorKwhBaru || '',
-    item.standKwhAwal !== undefined ? item.standKwhAwal : '',
+    standBongkarStr,
+    standPasangStr,
     item.nomorSeriSegel || '',
     item.tglPenyalaan || '',
     item.tglPdlUpdate || '',

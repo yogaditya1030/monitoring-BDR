@@ -2,7 +2,8 @@ export type TransaksiType = 'PB' | 'PD' | 'PFK';
 
 export type StatusPermohonan =
   | 'MOHON'
-  | 'SURVEI/RAB'
+  | 'SURVEI'
+  | 'RAB'
   | 'TANPA PERLUASAN'
   | 'BAYAR'
   | 'KERJA'
@@ -37,9 +38,11 @@ export interface PermohonanItem {
   meter: 'PRABAYAR' | 'PASKA BAYAR';
   kontakPerson: string;
   suratPermohonan: string;
+  suratPermohonanDataUrl?: string; // Data URL (PDF/Gambar) berkas Surat Permohonan yang diunggah Security
   tglSurat: string;
   petugasSurvei: string;
   tagingLokasi: string; // "Lat, Long"
+  nomorGardu?: string; // Nomor Gardu Distribusi PLN (Form Teknik)
   nomorTiang: string;
   idPel: string; // 12 digits
   idPelTetangga: string;
@@ -62,6 +65,7 @@ export interface PermohonanItem {
   gambarTeknik?: string;
   linkMap: string;
   tglSurvei: string;
+  tglRab?: string;
   rab: number; // Nilai RAB in Rupiah
   fotoMom?: string;
   dokumenMom?: string;
@@ -80,6 +84,16 @@ export interface PermohonanItem {
   // Transaksi Energi (TE) Details
   nomorKwhBaru?: string;
   standKwhAwal?: number;
+  // Stand Bongkar (Khusus Perubahan Daya / PD)
+  standBongkar?: number;
+  standBongkarWbp?: number;
+  standBongkarLwbp?: number;
+  standBongkarKvar?: number;
+  // Stand Pasang (Untuk Pasang Baru / PB maupun Perubahan Daya / PD)
+  standPasang?: number;
+  standPasangWbp?: number;
+  standPasangLwbp?: number;
+  standPasangKvar?: number;
   merkKwh?: string;
   rasioCt?: string;
   nomorSeriSegel?: string;
@@ -89,6 +103,9 @@ export interface PermohonanItem {
   biayaBp?: number;
   biayaUjl?: number;
   tglBayar?: string;
+
+  // Data Gambar Survei Google Maps & RAB Teknik
+  surveyRabDesign?: SurveyRabDesign;
   
   // Milestone Dates
   tglNotaDinasUlp?: string;
@@ -105,6 +122,129 @@ export interface PermohonanItem {
   createdAt: string;
   updatedAt: string;
   historyLogs: AuditLog[];
+}
+
+export type SurveyNodeKind =
+  | 'TIANG_EKSISTING'
+  | 'TIANG_RENCANA'
+  | 'GARDU_TRAFO'
+  | 'TITIK_APP';
+
+export interface SurveyPoleConstructionAssignment {
+  code: string; // e.g. 'C9-200', 'SJ5', 'CM2-12', 'SE1-2', 'F1-2'
+  qty: number;
+  disabledKhsIds?: string[]; // ID material/jasa KHS yang tidak dipasang pada titik ini
+  customComponentQty?: Record<string, number>; // Volume kustom per 1 set konstruksi pada titik ini
+}
+
+export interface SurveyPoleNode {
+  id: string;
+  kodeTiang: string; // e.g. 'SA4-20/1' or 'SA4-637/174/20'
+  kind: SurveyNodeKind;
+  lat: number;
+  lng: number;
+  constructions: SurveyPoleConstructionAssignment[];
+  catatan?: string;
+}
+
+export type SurveySpanConductorType =
+  | 'NFA2X-T 3x70+1x70'
+  | 'NFA2X-T 3x70+1x50'
+  | 'NFA2X-T 3x35+1x35'
+  | 'NFA2X-T 2x70'
+  | 'NFA2X-T 2x35'
+  | 'NFA2X 2x16'
+  | 'NFA2X 4x16'
+  | 'AAAC 70'
+  | 'AAAC 150'
+  | 'AAAC 240'
+  | 'AAAC/S 70'
+  | 'AAAC/S 150'
+  | 'AAAC/S 240'
+  | 'MVTIC 3x240+N95';
+
+export type NetworkCategory = 'JTM' | 'JTR' | 'SR';
+
+export type CablePhaseCount = 1 | 3;
+
+export interface SpanCableItem {
+  id: string;
+  statusJaringan: 'EKSISTING' | 'RENCANA';
+  jenisJaringan: NetworkCategory;
+  conductorType: SurveySpanConductorType;
+  phaseCount?: CablePhaseCount; // 1 = 1 Phase (1 garis /), 3 = 3 Phase (3 garis ///)
+  circuitCount?: number; // Jumlah sirkuit / jalur paralel pada gawang ini (default 1)
+}
+
+export interface SurveySpanEdge {
+  id: string;
+  fromNodeId: string;
+  toNodeId: string;
+  statusJaringan: 'EKSISTING' | 'RENCANA';
+  jenisJaringan: NetworkCategory;
+  conductorType: SurveySpanConductorType;
+  phaseCount?: CablePhaseCount; // 1 = 1 Phase (/), 3 = 3 Phase (///)
+  cables?: SpanCableItem[]; // Mendukung >1 jenis kabel dalam 1 gawang / antar tiang (misal Underbuilt JTM + JTR + SR)
+  distanceMeters: number; // Automatically calculated from GPS coordinates (or overridden)
+  manualDistanceOverride?: number;
+}
+
+export type RabGolongan = 'MDU-KD' | 'HDW' | 'JASA';
+
+export type RabRomanSection =
+  | 'I'
+  | 'II'
+  | 'III'
+  | 'IV'
+  | 'V'
+  | 'VI'
+  | 'VII'
+  | 'VIII'
+  | 'IX'
+  | 'X'
+  | 'XI'
+  | 'XII'
+  | 'XIII'
+  | 'XIV'
+  | 'XV'
+  | 'XVI';
+
+export interface RabLineItem {
+  id: string;
+  section: RabRomanSection;
+  uraian: string;
+  gol: RabGolongan;
+  satuan: string;
+  volume: number;
+  hargaSatuan: number;
+  sourceInfo?: string; // e.g. 'Otomatis dari 5 Tiang Rencana'
+}
+
+export interface RabOfficialHeader {
+  pekerjaan: string;
+  lokasi: string;
+  pelaksana: string;
+  anggaran: string;
+  nomorPrk: string;
+}
+
+export interface SurveyRabDesign {
+  judulGambar: string;
+  lokasiPekerjaan: string;
+  rayonUlp: string;
+  unitUlp?: string;
+  rabHeader?: RabOfficialHeader;
+  digambarOleh: string;
+  direncanakanOleh: string;
+  diperiksaOleh: string;
+  disetujuiOleh: string;
+  nodes: SurveyPoleNode[];
+  spans: SurveySpanEdge[];
+  rabItems: RabLineItem[];
+  ppnPercent: number; // 10 or 11
+  includePembetonanTiang: boolean;
+  transportasiRit: number;
+  updatedAt: string;
 }
 
 export interface TariffBpCalculation {
@@ -137,3 +277,4 @@ export interface GoogleSheetSyncState {
   autoSync: boolean;
   syncInProgress: boolean;
 }
+
