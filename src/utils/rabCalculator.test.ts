@@ -17,6 +17,11 @@ import {
   getStaggeredPhaseTickRatio,
   inferPhaseCountFromConductor,
   numberToTerbilangRupiah,
+  updateRabPackageHeaderVolume,
+  computeEtiketCalloutLayout,
+  isCableMarkedBongkar,
+  isSpanMarkedBongkar,
+  rectsOverlap,
 } from './rabCalculator';
 import {
   PRESET_SMPN3_PABELAN_NODES,
@@ -333,5 +338,286 @@ test('getConstructionAssignmentBreakdown and generateRabItemsFromSurvey respect 
   const disabledRow = partialBreakdown.rows.find((r) => r.khsId === firstKhsId)!;
   assert.equal(disabledRow.enabled, false);
   assert.equal(disabledRow.jumlahHarga, 0);
+});
+
+test('generateRabItemsFromSurvey expands GARDU_RENCANA constructions into RAB items', () => {
+  const items = generateRabItemsFromSurvey({
+    nodes: [
+      {
+        id: 'node-gardu-rencana-1',
+        kodeTiang: 'GD-BBD-R01',
+        kind: 'GARDU_RENCANA',
+        lat: -7.5818,
+        lng: 110.25716,
+        constructions: [
+          { code: 'C12-350', qty: 2 },
+          { code: 'CG-135 (50kVA)', qty: 1 },
+        ],
+      },
+    ],
+    spans: [],
+    includePembetonanTiang: false,
+    transportasiRit: 0,
+  });
+
+  assert.ok(items.length > 0, 'GARDU_RENCANA node should produce RAB items');
+  const summary = calculateRabSummary(items, 11);
+  assert.ok(summary.grandTotal > 0, 'GARDU_RENCANA should contribute to RAB grandTotal');
+});
+
+test('generateRabItemsFromSurvey emits hierarchical package header row (+ | MJ6-T | Unit | Vol) followed by its detail materials', () => {
+  const items = generateRabItemsFromSurvey({
+    nodes: PRESET_SMPN3_PABELAN_NODES,
+    spans: PRESET_SMPN3_PABELAN_SPANS,
+    includePembetonanTiang: true,
+    transportasiRit: 1,
+  });
+
+  const mj6HeaderIdx = items.findIndex(
+    (i) => i.isPackageHeader && i.uraian === 'MJ6-T' && i.section === 'X'
+  );
+  assert.ok(
+    mj6HeaderIdx >= 0,
+    'Should include package header row (+ | MJ6-T | Unit | 1) in Section X'
+  );
+  const mj6Header = items[mj6HeaderIdx];
+  assert.equal(mj6Header.satuan, 'Unit');
+  assert.equal(mj6Header.volume, 1);
+  assert.deepEqual(calculateRabRowBreakdown(mj6Header), {
+    mdu: 0,
+    hardware: 0,
+    jasa: 0,
+    jumlah: 0,
+  });
+
+  // Immediately after MJ6-T header should be its 5 official detail rows numbered 1..5
+  const mj6Children = items.slice(mj6HeaderIdx + 1, mj6HeaderIdx + 6);
+  assert.equal(mj6Children.length, 5);
+  assert.equal(mj6Children[0].itemNo, 1);
+  assert.ok(mj6Children[0].uraian.includes('Insulating Tape'));
+  assert.ok(mj6Children[1].uraian.includes('Split Plastic Sleve'));
+  assert.ok(mj6Children[2].uraian.includes('Stainless Steel Strap'));
+  assert.ok(mj6Children[3].uraian.includes('Stopping Buckle'));
+  assert.ok(mj6Children[4].uraian.includes('Upah Pasang Konst. JTR MJ6-T'));
+});
+
+test('Marking a pole or construction as BONGKAR generates Jasa Pembongkaran in Section XV', () => {
+  const items = generateRabItemsFromSurvey({
+    nodes: [
+      {
+        id: 'node-bongkar-1',
+        kodeTiang: 'SA4-637/174/20',
+        kind: 'TIANG_EKSISTING',
+        isBongkar: true,
+        lat: -7.5818,
+        lng: 110.25716,
+        constructions: [
+          { code: 'C9-200', qty: 1, actionType: 'BONGKAR' },
+          { code: 'SJ6', qty: 1, actionType: 'BONGKAR' },
+        ],
+      },
+    ],
+    spans: [],
+    includePembetonanTiang: false,
+    transportasiRit: 0,
+  });
+
+  const bongkarTiang = items.find(
+    (i) => i.section === 'XV' && i.uraian.includes('Upah Bongkar Tiang Beton')
+  );
+  assert.ok(bongkarTiang, 'Should include Upah Bongkar Tiang Beton in Section XV');
+  assert.equal(bongkarTiang.volume, 1);
+  assert.equal(bongkarTiang.gol, 'JASA');
+
+  const bongkarJtr = items.find(
+    (i) => i.section === 'XV' && i.uraian.includes('Upah Bongkar Konst. JTR')
+  );
+  assert.ok(bongkarJtr, 'Should include Upah Bongkar Konst. JTR in Section XV');
+  assert.equal(bongkarJtr.volume, 1);
+});
+
+test('updateRabPackageHeaderVolume multiplies SJ6 detail materials when changing from 1 -> 0 (backspace) -> 3 and CM2-12 canvas breakdown multiplies by 3', () => {
+  const items = generateRabItemsFromSurvey({
+    nodes: PRESET_SMPN3_PABELAN_NODES,
+    spans: PRESET_SMPN3_PABELAN_SPANS,
+    includePembetonanTiang: true,
+    transportasiRit: 1,
+  });
+
+  const sj6Header = items.find((i) => i.isPackageHeader && i.uraian === 'SJ6')!;
+  assert.ok(sj6Header);
+  assert.equal(sj6Header.volume, 1);
+
+  // Step 1: User presses Backspace in the input (volume becomes 0)
+  const afterBackspace = updateRabPackageHeaderVolume(items, sj6Header.id, 0);
+  const sj6ChildrenZero = afterBackspace.filter((i) => i.parentPackageCode === 'SJ6');
+  assert.ok(sj6ChildrenZero.every((r) => r.volume === 0));
+
+  // Step 2: User types '3' (volume becomes 3) -> all detail materials must multiply by 3 (not stay 0!)
+  const afterType3 = updateRabPackageHeaderVolume(afterBackspace, sj6Header.id, 3);
+  const sj6ChildrenThree = afterType3.filter((i) => i.parentPackageCode === 'SJ6');
+  // SJ6 base quantities: [1, 1, 2.5, 2, 3, 1] -> x3 = [3, 3, 7.5, 6, 9, 3]
+  assert.deepEqual(
+    sj6ChildrenThree.map((r) => r.volume),
+    [3, 3, 7.5, 6, 9, 3]
+  );
+
+  // Also verify Canvas breakdown for 3x CM2-12 multiplies volumes to 3, 9, 3, 3
+  const cm2Breakdown = getConstructionAssignmentBreakdown({
+    code: 'CM2-12',
+    qty: 3,
+  });
+  assert.deepEqual(
+    cm2Breakdown.rows.map((r) => r.volume),
+    [3, 9, 3, 3]
+  );
+});
+
+test('computeEtiketCalloutLayout places 8 curved-road poles, span badges, and road labels with zero bounding-box overlap', () => {
+  // Replicate the 8-pole curved road geometry from the user screenshot (SA4-20/1..8)
+  const nodes = [
+    { id: 'p1', kodeTiang: 'SA4-20/1', kind: 'TIANG_RENCANA' as const, x: 255, y: 375, lines: ['1 C9-200', '1 SJ5', '1 CM2-12'] },
+    { id: 'p2', kodeTiang: 'SA4-20/2', kind: 'TIANG_RENCANA' as const, x: 252, y: 295, lines: ['1 C9-200', '1 SJ5', '1 CM2-12'] },
+    { id: 'p3', kodeTiang: 'SA4-20/3', kind: 'TIANG_RENCANA' as const, x: 258, y: 215, lines: ['1 C9-200', '1 SJ5', '1 CM2-12'] },
+    { id: 'p4', kodeTiang: 'SA4-20/4', kind: 'TIANG_RENCANA' as const, x: 272, y: 140, lines: ['1 C9-200', '1 SJ5', '1 CM2-12'] },
+    // SA4-20/5 and SA4-20/6 sit close together near the top bend
+    { id: 'p5', kodeTiang: 'SA4-20/5', kind: 'TIANG_RENCANA' as const, x: 392, y: 105, lines: ['1 C9-200', '1 SJ5', '1 CM2-12'] },
+    { id: 'p6', kodeTiang: 'SA4-20/6', kind: 'TIANG_RENCANA' as const, x: 325, y: 112, lines: ['1 C9-200', '1 SJ5', '1 CM2-12'] },
+    { id: 'p7', kodeTiang: 'SA4-20/7', kind: 'TIANG_RENCANA' as const, x: 595, y: 125, lines: ['1 C9-200', '1 SJ5', '1 CM2-12'] },
+    // SA4-20/8 sits right near the default simpang road label
+    { id: 'p8', kodeTiang: 'SA4-20/8', kind: 'TIANG_RENCANA' as const, x: 595, y: 205, lines: ['1 C9-200', '1 SJ5', '1 CM2-12'] },
+  ];
+
+  const spans = [
+    { id: 's1', x1: 255, y1: 375, x2: 252, y2: 295, badgeText: '23m (JTR ///)', badgeW: 84 },
+    { id: 's2', x1: 252, y1: 295, x2: 258, y2: 215, badgeText: '22m (JTR ///)', badgeW: 84 },
+    { id: 's3', x1: 258, y1: 215, x2: 272, y2: 140, badgeText: '22m (JTR ///)', badgeW: 84 },
+    { id: 's4', x1: 392, y1: 105, x2: 595, y2: 125, badgeText: '46m (JTR ///)', badgeW: 84 },
+    { id: 's5', x1: 595, y1: 125, x2: 595, y2: 205, badgeText: '25m (JTR ///)', badgeW: 84 },
+  ];
+
+  const layout = computeEtiketCalloutLayout({
+    nodes,
+    spans,
+    defaultMainRoadCenter: { x: 290, y: 415 },
+    defaultSimpangRoadCenter: { x: 420, y: 185 },
+    showRoadSketch: true,
+  });
+
+  assert.equal(layout.nodePlacements.length, 8);
+  assert.equal(layout.spanBadges.length, 5);
+
+  // Verify no two callout boxes overlap each other
+  for (let i = 0; i < layout.nodePlacements.length; i++) {
+    for (let j = i + 1; j < layout.nodePlacements.length; j++) {
+      const a = layout.nodePlacements[i];
+      const b = layout.nodePlacements[j];
+      const overlap = rectsOverlap(
+        { x: a.boxX, y: a.boxY, w: a.boxWidth, h: a.boxHeight },
+        { x: b.boxX, y: b.boxY, w: b.boxWidth, h: b.boxHeight },
+        2
+      );
+      assert.equal(
+        overlap,
+        false,
+        `Callout box ${a.id} (${a.boxX},${a.boxY}) must not overlap ${b.id} (${b.boxX},${b.boxY})`
+      );
+    }
+  }
+
+  // Verify no callout box overlaps any pole circle
+  for (const callout of layout.nodePlacements) {
+    for (const pole of nodes) {
+      const overlap = rectsOverlap(
+        { x: callout.boxX, y: callout.boxY, w: callout.boxWidth, h: callout.boxHeight },
+        { x: pole.x - 10, y: pole.y - 10, w: 20, h: 20 },
+        2
+      );
+      assert.equal(
+        overlap,
+        false,
+        `Callout box ${callout.id} must not cover pole symbol ${pole.id}`
+      );
+    }
+  }
+
+  // Verify simpang road label does not overlap any callout box
+  const simpangRect = {
+    x: layout.simpangRoadLabelCenter.x - 72,
+    y: layout.simpangRoadLabelCenter.y - 8,
+    w: 144,
+    h: 16,
+  };
+  for (const callout of layout.nodePlacements) {
+    const overlap = rectsOverlap(
+      simpangRect,
+      { x: callout.boxX, y: callout.boxY, w: callout.boxWidth, h: callout.boxHeight },
+      2
+    );
+    assert.equal(
+      overlap,
+      false,
+      `Simpang road label must not overlap callout box ${callout.id}`
+    );
+  }
+});
+
+test('isSpanMarkedBongkar and generateRabItemsFromSurvey handle dismantled cables (Bongkar) without deleting the span and add Jasa Bongkar to Section XV', () => {
+  const nodes = [
+    {
+      id: 'n1',
+      kodeTiang: 'SA4-20/4',
+      kind: 'TIANG_RENCANA' as const,
+      lat: -7.6095,
+      lng: 110.2089,
+      constructions: [{ code: 'C9-200', qty: 1 }],
+    },
+    {
+      id: 'n2',
+      kodeTiang: 'SA4-20/5',
+      kind: 'TIANG_RENCANA' as const,
+      lat: -7.60925,
+      lng: 110.20898,
+      isBongkar: true,
+      constructions: [{ code: 'C9-200', qty: 1, actionType: 'BONGKAR' as const }],
+    },
+  ];
+
+  const dismantledSpan = {
+    id: 'sp-bongkar-1',
+    fromNodeId: 'n1',
+    toNodeId: 'n2',
+    statusJaringan: 'RENCANA' as const,
+    jenisJaringan: 'JTR' as const,
+    conductorType: 'NFA2X-T 3x70+1x70' as const,
+    phaseCount: 3 as const,
+    isBongkar: true,
+    actionType: 'BONGKAR' as const,
+    distanceMeters: 27,
+  };
+
+  assert.equal(isSpanMarkedBongkar(dismantledSpan), true);
+  const effCables = getEffectiveSpanCables(dismantledSpan);
+  assert.equal(effCables.length, 1);
+  assert.equal(isCableMarkedBongkar(effCables[0], dismantledSpan), true);
+
+  const items = generateRabItemsFromSurvey({
+    nodes,
+    spans: [dismantledSpan],
+    includePembetonanTiang: false,
+    transportasiRit: 0,
+  });
+
+  // Should NOT charge new MDU LVTC conductor for a dismantled cable
+  const newLvtcMdu = items.find((i) => i.section === 'XI' && i.gol === 'MDU-KD');
+  assert.equal(newLvtcMdu, undefined);
+
+  // Should include Upah Bongkar Penghantar TR LVTC in Section XV
+  const bongkarCableJasa = items.find(
+    (i) => i.section === 'XV' && i.uraian.includes('Upah Bongkar Penghantar TR LVTC')
+  );
+  assert.ok(bongkarCableJasa, 'Should include Upah Bongkar Penghantar TR LVTC in Section XV');
+  assert.equal(bongkarCableJasa.volume, 1);
+  assert.equal(bongkarCableJasa.gol, 'JASA');
 });
 

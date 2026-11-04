@@ -483,7 +483,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
       )}
 
-      {/* Unified Pipeline Summary & Bottleneck Strip (Collapsed Details by Default) */}
+      {/* Unified Pipeline Summary & Search/Filter Toolbar */}
       <DashboardWidget
         records={records}
         selectedStatus={filterStatus}
@@ -491,270 +491,270 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         onSelectStatus={(status) => setFilterStatus(status)}
         onSelectTransaksi={(tr) => setFilterTransaksi(tr)}
         onSelectRecord={onSelectRecord}
+        toolbarSlot={
+          <div className="space-y-2">
+            <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-2">
+              {/* Top Row on Mobile: Search Input + Mobile Filter Button + View Mode Toggle */}
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <div className="relative flex-1 min-w-0">
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-sky-600 z-10 flex items-center">
+                    <Search className="w-4 h-4 shrink-0" />
+                  </div>
+                  <input
+                    type="text"
+                    aria-label="Cari permohonan"
+                    placeholder="Cari Nama Pelanggan, IDPEL, Gardu, Tiang, atau No Nodin..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full h-9 pl-9 pr-8 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-medium text-slate-900 placeholder-slate-400 focus:ring-2 focus:ring-sky-500 focus:border-sky-500 focus:outline-hidden transition"
+                  />
+                  {searchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 flex items-center text-slate-400 hover:text-rose-600 transition z-10"
+                      title="Hapus pencarian"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Mobile Filter Toggle Button (< lg) */}
+                <button
+                  type="button"
+                  onClick={() => setShowMobileFilters((prev) => !prev)}
+                  aria-expanded={showMobileFilters}
+                  className={`lg:hidden flex items-center gap-1.5 px-3 h-9 rounded-lg border text-xs font-bold shrink-0 transition cursor-pointer ${
+                    showMobileFilters || activeFilterCount > 0
+                      ? 'bg-sky-50 border-sky-500 text-sky-900'
+                      : 'bg-white border-slate-300 text-slate-700'
+                  }`}
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-sky-700" />
+                  <span>Filter</span>
+                  {activeFilterCount > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full bg-sky-700 text-white text-[10px]">
+                      {activeFilterCount}
+                    </span>
+                  )}
+                </button>
+
+                {/* View Mode Toggle */}
+                <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden bg-slate-100 p-0.5 shrink-0">
+                  <button
+                    onClick={() => setViewMode('table')}
+                    className={`px-2 py-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer ${
+                      viewMode === 'table' ? 'bg-white text-sky-800 shadow-2xs' : 'text-slate-600'
+                    }`}
+                    title="Tampilan Daftar / Tabel"
+                  >
+                    <List className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Daftar</span>
+                  </button>
+                  <button
+                    onClick={() => setViewMode('kanban')}
+                    className={`px-2 py-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer ${
+                      viewMode === 'kanban' ? 'bg-white text-sky-800 shadow-2xs' : 'text-slate-600'
+                    }`}
+                    title="Tampilan Kanban Workflow"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Kanban</span>
+                  </button>
+                  <button
+                    onClick={() => setViewMode('map')}
+                    className={`px-2 py-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer ${
+                      viewMode === 'map' ? 'bg-white text-sky-800 shadow-2xs' : 'text-slate-600'
+                    }`}
+                    title="Tampilan Peta Titik Tiang PLN"
+                  >
+                    <MapPin className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Peta GIS</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter Dropdowns Group (Always visible on lg+, collapsible on mobile) */}
+              <div
+                className={`${
+                  showMobileFilters ? 'flex' : 'hidden lg:flex'
+                } flex-wrap items-center gap-1.5 pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-200/80 shrink-0`}
+              >
+                {/* Status Dropdown */}
+                <div className="relative flex items-center">
+                  <label htmlFor="filter-status-select" className="sr-only">
+                    Filter Status Permohonan
+                  </label>
+                  <div className="absolute left-2 pointer-events-none text-slate-400">
+                    <Filter className="w-3.5 h-3.5 text-sky-700" />
+                  </div>
+                  <select
+                    id="filter-status-select"
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                    className={`pl-6.5 pr-4.5 py-1.5 h-9 border rounded-lg text-[11px] font-semibold appearance-none bg-white transition cursor-pointer ${
+                      filterStatus !== 'ALL'
+                        ? 'border-sky-500 bg-sky-50 text-sky-950 ring-1 ring-sky-400'
+                        : 'border-slate-300 text-slate-700 hover:border-slate-400'
+                    }`}
+                  >
+                    <option value="ALL">Status: Semua ({records.length})</option>
+                    <option value="MOHON">1. MOHON ({statusCounts['MOHON']})</option>
+                    <option value="SURVEI">2. SURVEI ({statusCounts['SURVEI']})</option>
+                    <option value="RAB">3. RAB ({statusCounts['RAB']})</option>
+                    <option value="TANPA PERLUASAN">TANPA PERLUASAN ({statusCounts['TANPA PERLUASAN']})</option>
+                    <option value="BAYAR">4. BAYAR ({statusCounts['BAYAR']})</option>
+                    <option value="KERJA">5. KERJA ({statusCounts['KERJA']})</option>
+                    <option value="NYALA">6. NYALA ({statusCounts['NYALA']})</option>
+                    <option value="PDL">7. PDL Selesai ({statusCounts['PDL']})</option>
+                  </select>
+                  <div className="absolute right-1.5 pointer-events-none text-slate-400 text-[9px]">▼</div>
+                </div>
+
+                {/* Transaksi Dropdown */}
+                <div className="relative flex items-center">
+                  <label htmlFor="filter-transaksi-select" className="sr-only">
+                    Filter Jenis Transaksi
+                  </label>
+                  <div className="absolute left-2 pointer-events-none text-slate-400">
+                    <Zap className="w-3.5 h-3.5 text-amber-600" />
+                  </div>
+                  <select
+                    id="filter-transaksi-select"
+                    value={filterTransaksi}
+                    onChange={(e) => setFilterTransaksi(e.target.value)}
+                    className={`pl-6.5 pr-4.5 py-1.5 h-9 border rounded-lg text-[11px] font-semibold appearance-none bg-white transition cursor-pointer ${
+                      filterTransaksi !== 'ALL'
+                        ? 'border-amber-500 bg-amber-50 text-amber-950 ring-1 ring-amber-400'
+                        : 'border-slate-300 text-slate-700 hover:border-slate-400'
+                    }`}
+                  >
+                    <option value="ALL">Transaksi: Semua ({records.length})</option>
+                    <option value="PB">Pasang Baru (PB) ({transaksiCounts.PB})</option>
+                    <option value="PD">Perubahan Daya (PD) ({transaksiCounts.PD})</option>
+                    <option value="PFK">⚡ Khusus PFK ({transaksiCounts.PFK})</option>
+                  </select>
+                  <div className="absolute right-1.5 pointer-events-none text-slate-400 text-[9px]">▼</div>
+                </div>
+
+                {/* IDPEL Filter Dropdown */}
+                <div className="relative flex items-center">
+                  <label htmlFor="filter-idpel-select" className="sr-only">
+                    Filter Status IDPEL
+                  </label>
+                  <div className="absolute left-2 pointer-events-none text-slate-400">
+                    <Hash className="w-3.5 h-3.5 text-indigo-600" />
+                  </div>
+                  <select
+                    id="filter-idpel-select"
+                    value={filterIdPelPresence}
+                    onChange={(e) => setFilterIdPelPresence(e.target.value as any)}
+                    className={`pl-6.5 pr-4.5 py-1.5 h-9 border rounded-lg text-[11px] font-semibold appearance-none bg-white transition cursor-pointer ${
+                      filterIdPelPresence !== 'ALL'
+                        ? 'border-indigo-500 bg-indigo-50 text-indigo-950 ring-1 ring-indigo-400'
+                        : 'border-slate-300 text-slate-700 hover:border-slate-400'
+                    }`}
+                  >
+                    <option value="ALL">IDPEL: Semua</option>
+                    <option value="WITH_IDPEL">Ada IDPEL ({idpelCounts.withIdpel})</option>
+                    <option value="WITHOUT_IDPEL">Belum IDPEL ({idpelCounts.withoutIdpel})</option>
+                  </select>
+                  <div className="absolute right-1.5 pointer-events-none text-slate-400 text-[9px]">▼</div>
+                </div>
+
+                {/* Sort Dropdown */}
+                <div className="relative flex items-center">
+                  <label htmlFor="filter-sort-select" className="sr-only">
+                    Urutkan Permohonan
+                  </label>
+                  <div className="absolute left-2 pointer-events-none text-slate-400">
+                    <ArrowUpDown className="w-3.5 h-3.5 text-slate-500" />
+                  </div>
+                  <select
+                    id="filter-sort-select"
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as any)}
+                    className={`pl-6.5 pr-4.5 py-1.5 h-9 border rounded-lg text-[11px] font-semibold appearance-none bg-white transition cursor-pointer ${
+                      sortBy !== 'date_desc'
+                        ? 'border-slate-600 bg-slate-100 text-slate-900 font-bold'
+                        : 'border-slate-300 text-slate-700 hover:border-slate-400'
+                    }`}
+                  >
+                    <option value="date_desc">Urut: Terbaru</option>
+                    <option value="days_desc">Durasi Hari Terlama</option>
+                    <option value="name_asc">Nama (A - Z)</option>
+                    <option value="idpel_asc">Nomor IDPEL</option>
+                    <option value="daya_desc">Daya Terbesar</option>
+                    <option value="rab_desc">RAB Terbesar</option>
+                  </select>
+                  <div className="absolute right-1.5 pointer-events-none text-slate-400 text-[9px]">▼</div>
+                </div>
+
+                {/* Export XLS */}
+                <button
+                  onClick={handleExportXls}
+                  className="flex items-center gap-1 px-2.5 h-9 border border-slate-300 rounded-lg text-[11px] font-semibold text-slate-700 bg-white hover:bg-slate-50 transition hover:border-emerald-500 hover:text-emerald-800 cursor-pointer"
+                  title="Unduh Data Format Microsoft Excel (.xls)"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Export XLS</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Compact Active Filter Summary Row (Only shown when filters/search are active) */}
+            {hasActiveFilters && (
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-200/80 text-xs">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-slate-500">
+                    Menampilkan <strong className="text-slate-900">{filteredRecords.length}</strong> dari {records.length} data:
+                  </span>
+                  {searchTerm.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm('')}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-50 text-sky-900 font-semibold text-[11px] border border-sky-200 hover:bg-sky-100 cursor-pointer"
+                    >
+                      <span>Cari: &ldquo;{searchTerm}&rdquo;</span>
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                  {filterStatus !== 'ALL' && (
+                    <button
+                      type="button"
+                      onClick={() => setFilterStatus('ALL')}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-950 font-semibold text-[11px] border border-amber-200 hover:bg-amber-100 cursor-pointer"
+                    >
+                      <span>Status: {filterStatus}</span>
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                  {filterTransaksi !== 'ALL' && (
+                    <button
+                      type="button"
+                      onClick={() => setFilterTransaksi('ALL')}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-50 text-rose-950 font-semibold text-[11px] border border-rose-200 hover:bg-rose-100 cursor-pointer"
+                    >
+                      <span>Transaksi: {filterTransaksi}</span>
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleResetFilters}
+                  className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold text-rose-700 hover:underline cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Reset Filter</span>
+                </button>
+              </div>
+            )}
+          </div>
+        }
       />
-
-      {/* Streamlined Toolbar: Search, Collapsible Mobile Filters, View Modes & Export */}
-      <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-3.5 shadow-xs space-y-2.5">
-        <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-2.5">
-          {/* Top Row on Mobile: Search Input + Mobile Filter Button + View Mode Toggle */}
-          <div className="flex items-center gap-2 flex-1">
-            <div className="relative flex-1 min-w-0">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-sky-600 z-10 flex items-center">
-                <Search className="w-4 h-4 shrink-0" />
-              </div>
-              <input
-                type="text"
-                aria-label="Cari permohonan"
-                placeholder="Cari Nama Pelanggan, IDPEL, Gardu, Tiang, atau No Nodin..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full h-9 sm:h-10 pl-9 pr-8 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium text-slate-900 placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-sky-500 focus:border-sky-500 focus:outline-hidden transition"
-              />
-              {searchTerm && (
-                <button
-                  type="button"
-                  onClick={() => setSearchTerm('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 flex items-center text-slate-400 hover:text-rose-600 transition z-10"
-                  title="Hapus pencarian"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* Mobile Filter Toggle Button (< lg) */}
-            <button
-              type="button"
-              onClick={() => setShowMobileFilters((prev) => !prev)}
-              aria-expanded={showMobileFilters}
-              className={`lg:hidden flex items-center gap-1.5 px-3 h-9 sm:h-10 rounded-lg border text-xs font-bold shrink-0 transition cursor-pointer ${
-                showMobileFilters || activeFilterCount > 0
-                  ? 'bg-sky-50 border-sky-500 text-sky-900'
-                  : 'bg-white border-slate-300 text-slate-700'
-              }`}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5 text-sky-700" />
-              <span>Filter</span>
-              {activeFilterCount > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full bg-sky-700 text-white text-[10px]">
-                  {activeFilterCount}
-                </span>
-              )}
-            </button>
-
-            {/* View Mode Toggle */}
-            <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden bg-slate-100 p-0.5 shrink-0">
-              <button
-                onClick={() => setViewMode('table')}
-                className={`px-2 py-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer ${
-                  viewMode === 'table' ? 'bg-white text-sky-800 shadow-2xs' : 'text-slate-600'
-                }`}
-                title="Tampilan Daftar / Tabel"
-              >
-                <List className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Daftar</span>
-              </button>
-              <button
-                onClick={() => setViewMode('kanban')}
-                className={`px-2 py-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer ${
-                  viewMode === 'kanban' ? 'bg-white text-sky-800 shadow-2xs' : 'text-slate-600'
-                }`}
-                title="Tampilan Kanban Workflow"
-              >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Kanban</span>
-              </button>
-              <button
-                onClick={() => setViewMode('map')}
-                className={`px-2 py-1.5 rounded text-xs font-semibold flex items-center gap-1 cursor-pointer ${
-                  viewMode === 'map' ? 'bg-white text-sky-800 shadow-2xs' : 'text-slate-600'
-                }`}
-                title="Tampilan Peta Titik Tiang PLN"
-              >
-                <MapPin className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Peta GIS</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Filter Dropdowns Group (Always visible on lg+, collapsible on mobile) */}
-          <div
-            className={`${
-              showMobileFilters ? 'flex' : 'hidden lg:flex'
-            } flex-wrap items-center gap-2 pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100`}
-          >
-            {/* Status Dropdown */}
-            <div className="relative flex items-center">
-              <label htmlFor="filter-status-select" className="sr-only">
-                Filter Status Permohonan
-              </label>
-              <div className="absolute left-2.5 pointer-events-none text-slate-400">
-                <Filter className="w-3.5 h-3.5 text-sky-700" />
-              </div>
-              <select
-                id="filter-status-select"
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                className={`pl-8 pr-6 py-1.5 h-9 border rounded-lg text-xs font-semibold appearance-none bg-white transition cursor-pointer ${
-                  filterStatus !== 'ALL'
-                    ? 'border-sky-500 bg-sky-50 text-sky-950 ring-1 ring-sky-400'
-                    : 'border-slate-300 text-slate-700 hover:border-slate-400'
-                }`}
-              >
-                <option value="ALL">Status: Semua ({records.length})</option>
-                <option value="MOHON">1. MOHON ({statusCounts['MOHON']})</option>
-                <option value="SURVEI">2. SURVEI ({statusCounts['SURVEI']})</option>
-                <option value="RAB">3. RAB ({statusCounts['RAB']})</option>
-                <option value="TANPA PERLUASAN">TANPA PERLUASAN ({statusCounts['TANPA PERLUASAN']})</option>
-                <option value="BAYAR">4. BAYAR ({statusCounts['BAYAR']})</option>
-                <option value="KERJA">5. KERJA ({statusCounts['KERJA']})</option>
-                <option value="NYALA">6. NYALA ({statusCounts['NYALA']})</option>
-                <option value="PDL">7. PDL Selesai ({statusCounts['PDL']})</option>
-              </select>
-              <div className="absolute right-2 pointer-events-none text-slate-400 text-[10px]">▼</div>
-            </div>
-
-            {/* Transaksi Dropdown */}
-            <div className="relative flex items-center">
-              <label htmlFor="filter-transaksi-select" className="sr-only">
-                Filter Jenis Transaksi
-              </label>
-              <div className="absolute left-2.5 pointer-events-none text-slate-400">
-                <Zap className="w-3.5 h-3.5 text-amber-600" />
-              </div>
-              <select
-                id="filter-transaksi-select"
-                value={filterTransaksi}
-                onChange={(e) => setFilterTransaksi(e.target.value)}
-                className={`pl-8 pr-6 py-1.5 h-9 border rounded-lg text-xs font-semibold appearance-none bg-white transition cursor-pointer ${
-                  filterTransaksi !== 'ALL'
-                    ? 'border-amber-500 bg-amber-50 text-amber-950 ring-1 ring-amber-400'
-                    : 'border-slate-300 text-slate-700 hover:border-slate-400'
-                }`}
-              >
-                <option value="ALL">Transaksi: Semua ({records.length})</option>
-                <option value="PB">Pasang Baru (PB) ({transaksiCounts.PB})</option>
-                <option value="PD">Perubahan Daya (PD) ({transaksiCounts.PD})</option>
-                <option value="PFK">⚡ Khusus PFK ({transaksiCounts.PFK})</option>
-              </select>
-              <div className="absolute right-2 pointer-events-none text-slate-400 text-[10px]">▼</div>
-            </div>
-
-            {/* IDPEL Filter Dropdown */}
-            <div className="relative flex items-center">
-              <label htmlFor="filter-idpel-select" className="sr-only">
-                Filter Status IDPEL
-              </label>
-              <div className="absolute left-2.5 pointer-events-none text-slate-400">
-                <Hash className="w-3.5 h-3.5 text-indigo-600" />
-              </div>
-              <select
-                id="filter-idpel-select"
-                value={filterIdPelPresence}
-                onChange={(e) => setFilterIdPelPresence(e.target.value as any)}
-                className={`pl-8 pr-6 py-1.5 h-9 border rounded-lg text-xs font-semibold appearance-none bg-white transition cursor-pointer ${
-                  filterIdPelPresence !== 'ALL'
-                    ? 'border-indigo-500 bg-indigo-50 text-indigo-950 ring-1 ring-indigo-400'
-                    : 'border-slate-300 text-slate-700 hover:border-slate-400'
-                }`}
-              >
-                <option value="ALL">IDPEL: Semua</option>
-                <option value="WITH_IDPEL">Ada IDPEL ({idpelCounts.withIdpel})</option>
-                <option value="WITHOUT_IDPEL">Belum IDPEL ({idpelCounts.withoutIdpel})</option>
-              </select>
-              <div className="absolute right-2 pointer-events-none text-slate-400 text-[10px]">▼</div>
-            </div>
-
-            {/* Sort Dropdown */}
-            <div className="relative flex items-center">
-              <label htmlFor="filter-sort-select" className="sr-only">
-                Urutkan Permohonan
-              </label>
-              <div className="absolute left-2.5 pointer-events-none text-slate-400">
-                <ArrowUpDown className="w-3.5 h-3.5 text-slate-500" />
-              </div>
-              <select
-                id="filter-sort-select"
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className={`pl-8 pr-6 py-1.5 h-9 border rounded-lg text-xs font-semibold appearance-none bg-white transition cursor-pointer ${
-                  sortBy !== 'date_desc'
-                    ? 'border-slate-600 bg-slate-100 text-slate-900 font-bold'
-                    : 'border-slate-300 text-slate-700 hover:border-slate-400'
-                }`}
-              >
-                <option value="date_desc">Urut: Terbaru</option>
-                <option value="days_desc">Durasi Hari Terlama</option>
-                <option value="name_asc">Nama (A - Z)</option>
-                <option value="idpel_asc">Nomor IDPEL</option>
-                <option value="daya_desc">Daya Terbesar</option>
-                <option value="rab_desc">RAB Terbesar</option>
-              </select>
-              <div className="absolute right-2 pointer-events-none text-slate-400 text-[10px]">▼</div>
-            </div>
-
-            {/* Export XLS */}
-            <button
-              onClick={handleExportXls}
-              className="flex items-center gap-1.5 px-3 h-9 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 transition hover:border-emerald-500 hover:text-emerald-800 cursor-pointer"
-              title="Unduh Data Format Microsoft Excel (.xls)"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Export XLS</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Compact Active Filter Summary Row (Only shown when filters/search are active) */}
-        {hasActiveFilters && (
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] text-slate-500">
-                Menampilkan <strong className="text-slate-900">{filteredRecords.length}</strong> dari {records.length} data:
-              </span>
-              {searchTerm.trim() && (
-                <button
-                  type="button"
-                  onClick={() => setSearchTerm('')}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-50 text-sky-900 font-semibold text-[11px] border border-sky-200 hover:bg-sky-100 cursor-pointer"
-                >
-                  <span>Cari: &ldquo;{searchTerm}&rdquo;</span>
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-              {filterStatus !== 'ALL' && (
-                <button
-                  type="button"
-                  onClick={() => setFilterStatus('ALL')}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-950 font-semibold text-[11px] border border-amber-200 hover:bg-amber-100 cursor-pointer"
-                >
-                  <span>Status: {filterStatus}</span>
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-              {filterTransaksi !== 'ALL' && (
-                <button
-                  type="button"
-                  onClick={() => setFilterTransaksi('ALL')}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-50 text-rose-950 font-semibold text-[11px] border border-rose-200 hover:bg-rose-100 cursor-pointer"
-                >
-                  <span>Transaksi: {filterTransaksi}</span>
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={handleResetFilters}
-              className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-bold text-rose-700 hover:underline cursor-pointer"
-            >
-              <RotateCcw className="w-3 h-3" />
-              <span>Reset Filter</span>
-            </button>
-          </div>
-        )}
-      </div>
 
       {/* VIEW 1: MASTER DATA (MOBILE CARD VIEW + DESKTOP TABLE) */}
       {viewMode === 'table' && (

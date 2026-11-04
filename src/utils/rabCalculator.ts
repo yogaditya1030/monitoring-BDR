@@ -137,17 +137,30 @@ export function buildPhaseSlashSvg(
  */
 export function getEffectiveSpanCables(span: SurveySpanEdge): SpanCableItem[] {
   if (span.cables && span.cables.length > 0) {
-    return span.cables.map((c) => ({
-      ...c,
-      jenisJaringan:
-        c.jenisJaringan || inferNetworkCategoryFromConductor(c.conductorType),
-      phaseCount: inferPhaseCountFromConductor(
-        c.conductorType,
-        c.phaseCount ?? span.phaseCount
-      ),
-      circuitCount: Math.max(1, c.circuitCount || 1),
-    }));
+    return span.cables.map((c) => {
+      const isBongkar = Boolean(
+        c.isBongkar ||
+          c.actionType === 'BONGKAR' ||
+          span.isBongkar ||
+          span.actionType === 'BONGKAR'
+      );
+      return {
+        ...c,
+        jenisJaringan:
+          c.jenisJaringan || inferNetworkCategoryFromConductor(c.conductorType),
+        phaseCount: inferPhaseCountFromConductor(
+          c.conductorType,
+          c.phaseCount ?? span.phaseCount
+        ),
+        circuitCount: Math.max(1, c.circuitCount || 1),
+        isBongkar,
+        actionType: isBongkar ? 'BONGKAR' : c.actionType || 'PASANG',
+      };
+    });
   }
+  const isBongkar = Boolean(
+    span.isBongkar || span.actionType === 'BONGKAR'
+  );
   return [
     {
       id: `${span.id}-default`,
@@ -161,6 +174,8 @@ export function getEffectiveSpanCables(span: SurveySpanEdge): SpanCableItem[] {
         span.phaseCount
       ),
       circuitCount: 1,
+      isBongkar,
+      actionType: isBongkar ? 'BONGKAR' : span.actionType || 'PASANG',
     },
   ];
 }
@@ -369,11 +384,64 @@ export interface PoleMaterialBreakdownRow {
 }
 
 /**
+ * Mengecek apakah suatu titik tiang / gardu memiliki tanda pembongkaran (Simbol X Merah)
+ */
+export function isNodeMarkedBongkar(node: SurveyPoleNode): boolean {
+  if (node.isBongkar) return true;
+  return (node.constructions || []).some(
+    (c) =>
+      c.actionType === 'BONGKAR' ||
+      c.actionType === 'BONGKAR_PASANG' ||
+      c.code.toUpperCase().startsWith('BONGKAR-')
+  );
+}
+
+/**
+ * Mengecek apakah suatu item kabel dalam gawang ditandai BONGKAR (Simbol X Merah)
+ */
+export function isCableMarkedBongkar(
+  cable: SpanCableItem,
+  parentSpan?: SurveySpanEdge
+): boolean {
+  if (cable.isBongkar || cable.actionType === 'BONGKAR') return true;
+  if (parentSpan && (parentSpan.isBongkar || parentSpan.actionType === 'BONGKAR')) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Mengecek apakah suatu bentangan kabel (gawang) memiliki tanda pembongkaran (Simbol X Merah)
+ */
+export function isSpanMarkedBongkar(span: SurveySpanEdge): boolean {
+  if (span.isBongkar || span.actionType === 'BONGKAR') return true;
+  return getEffectiveSpanCables(span).some((c) =>
+    isCableMarkedBongkar(c, span)
+  );
+}
+
+/**
+ * Membangun SVG simbol X berwarna merah tegas untuk menandai konstruksi/tiang yang dibongkar di Kanvas Peta GIS
+ */
+export function buildBongkarXSvg(size: number = 28): string {
+  const half = size / 2;
+  const pad = 4;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" data-testid="pole-bongkar-x-symbol" style="overflow:visible; pointer-events:none;">
+    <line x1="${pad}" y1="${pad}" x2="${size - pad}" y2="${size - pad}" stroke="#ffffff" stroke-width="5" stroke-linecap="round" />
+    <line x1="${size - pad}" y1="${pad}" x2="${pad}" y2="${size - pad}" stroke="#ffffff" stroke-width="5" stroke-linecap="round" />
+    <line x1="${pad}" y1="${pad}" x2="${size - pad}" y2="${size - pad}" stroke="#dc2626" stroke-width="3" stroke-linecap="round" />
+    <line x1="${size - pad}" y1="${pad}" x2="${pad}" y2="${size - pad}" stroke="#dc2626" stroke-width="3" stroke-linecap="round" />
+    <circle cx="${half}" cy="${half}" r="2.2" fill="#dc2626" />
+  </svg>`;
+}
+
+/**
  * Mengekspansi rincian komponen material & jasa KHS untuk 1 item konstruksi pada tiang,
- * mendukung pemilihan riil (centang aktif/nonaktif & ubah volume per komponen).
+ * mendukung pemilihan riil (centang aktif/nonaktif & ubah volume per komponen) serta aksi PASANG / BONGKAR / BONGKAR_PASANG.
  */
 export function getConstructionAssignmentBreakdown(
-  assign: SurveyPoleConstructionAssignment
+  assign: SurveyPoleConstructionAssignment,
+  nodeIsBongkar: boolean = false
 ): {
   rows: PoleMaterialBreakdownRow[];
   totalActivePrice: number;
@@ -381,14 +449,50 @@ export function getConstructionAssignmentBreakdown(
   const pkg = CONSTRUCTION_PACKAGES_CATALOG.find(
     (p) => p.code.toUpperCase() === assign.code.toUpperCase()
   );
-  if (!pkg || assign.qty <= 0) {
+  if (!pkg) {
     return { rows: [], totalActivePrice: 0 };
   }
+  const safeAssignQty = Math.max(0, Number(assign.qty) || 0);
 
+  const effectiveAction =
+    assign.actionType || (nodeIsBongkar ? 'BONGKAR' : 'PASANG');
   const disabledSet = new Set(assign.disabledKhsIds || []);
   const customQtyMap = assign.customComponentQty || {};
   const rows: PoleMaterialBreakdownRow[] = [];
   let totalActivePrice = 0;
+
+  // Bila aksi adalah BONGKAR murni (dan paket bukan kategori BONGKAR langsung), gunakan jasa pembongkaran (bongkarKhsId)
+  if (effectiveAction === 'BONGKAR' && pkg.category !== 'BONGKAR') {
+    const bongkarId = pkg.bongkarKhsId || 'JASA_BONGKAR_JTR';
+    const khs = KHS_MASTER_CATALOG[bongkarId];
+    if (khs) {
+      const enabled = !disabledSet.has(khs.id);
+      const unitQty =
+        customQtyMap[khs.id] !== undefined
+          ? Math.max(0, Number(customQtyMap[khs.id]))
+          : 1;
+      const vol = enabled ? Math.round(unitQty * safeAssignQty * 100) / 100 : 0;
+      const jumlahHarga = enabled ? Math.round(vol * khs.hargaSatuan) : 0;
+      if (enabled) {
+        totalActivePrice += jumlahHarga;
+      }
+      rows.push({
+        packageCode: pkg.code,
+        packageQty: safeAssignQty,
+        khsId: khs.id,
+        uraian: `${khs.uraian} (${pkg.code})`,
+        gol: khs.gol,
+        satuan: khs.satuan,
+        defaultUnitQty: 1,
+        unitQty,
+        volume: vol,
+        hargaSatuan: khs.hargaSatuan,
+        jumlahHarga,
+        enabled,
+      });
+    }
+    return { rows, totalActivePrice };
+  }
 
   pkg.components.forEach((comp) => {
     const khs = KHS_MASTER_CATALOG[comp.khsId];
@@ -398,7 +502,7 @@ export function getConstructionAssignmentBreakdown(
       customQtyMap[comp.khsId] !== undefined
         ? Math.max(0, Number(customQtyMap[comp.khsId]))
         : comp.qty;
-    const vol = enabled ? Math.round(unitQty * assign.qty * 100) / 100 : 0;
+    const vol = enabled ? Math.round(unitQty * safeAssignQty * 100) / 100 : 0;
     const jumlahHarga = enabled ? Math.round(vol * khs.hargaSatuan) : 0;
 
     if (enabled) {
@@ -407,7 +511,7 @@ export function getConstructionAssignmentBreakdown(
 
     rows.push({
       packageCode: pkg.code,
-      packageQty: assign.qty,
+      packageQty: safeAssignQty,
       khsId: khs.id,
       uraian: khs.uraian,
       gol: khs.gol,
@@ -420,6 +524,37 @@ export function getConstructionAssignmentBreakdown(
       enabled,
     });
   });
+
+  // Bila BONGKAR_PASANG, tambahkan juga baris jasa pembongkaran
+  if (effectiveAction === 'BONGKAR_PASANG' && pkg.bongkarKhsId) {
+    const khs = KHS_MASTER_CATALOG[pkg.bongkarKhsId];
+    if (khs && !rows.some((r) => r.khsId === khs.id)) {
+      const enabled = !disabledSet.has(khs.id);
+      const unitQty =
+        customQtyMap[khs.id] !== undefined
+          ? Math.max(0, Number(customQtyMap[khs.id]))
+          : 1;
+      const vol = enabled ? Math.round(unitQty * safeAssignQty * 100) / 100 : 0;
+      const jumlahHarga = enabled ? Math.round(vol * khs.hargaSatuan) : 0;
+      if (enabled) {
+        totalActivePrice += jumlahHarga;
+      }
+      rows.push({
+        packageCode: pkg.code,
+        packageQty: safeAssignQty,
+        khsId: khs.id,
+        uraian: khs.uraian,
+        gol: khs.gol,
+        satuan: khs.satuan,
+        defaultUnitQty: 1,
+        unitQty,
+        volume: vol,
+        hargaSatuan: khs.hargaSatuan,
+        jumlahHarga,
+        enabled,
+      });
+    }
+  }
 
   return { rows, totalActivePrice };
 }
@@ -442,7 +577,10 @@ export function getPoleKhsMaterialBreakdown(node: SurveyPoleNode): {
 
   (node.constructions || []).forEach((assign) => {
     if (assign.qty <= 0) return;
-    const { rows: assignRows } = getConstructionAssignmentBreakdown(assign);
+    const { rows: assignRows } = getConstructionAssignmentBreakdown(
+      assign,
+      Boolean(node.isBongkar)
+    );
     assignRows.forEach((row) => {
       if (!row.enabled || row.volume <= 0) return;
       if (row.gol === 'MDU-KD') totalMdu += row.jumlahHarga;
@@ -503,6 +641,7 @@ export function getMidpointCoordinate(
 /**
  * Memformat baris callout konstruksi tiang sesuai Contoh File Gambar Survey PLN
  * Contoh output: ["1 C9-200", "1 SJ5", "1 CM2-12"]
+ * Bila item ditandai BONGKAR, menampilkan tanda ✕ (Bongkar)
  */
 export function formatPoleCalloutLines(node: SurveyPoleNode): string[] {
   if (!node.constructions || node.constructions.length === 0) {
@@ -510,7 +649,37 @@ export function formatPoleCalloutLines(node: SurveyPoleNode): string[] {
   }
   return node.constructions
     .filter((c) => c.qty > 0 && c.code.trim() !== '')
-    .map((c) => `${c.qty} ${c.code}`);
+    .map((c) => {
+      if (c.actionType === 'BONGKAR') {
+        return `✕ ${c.qty} ${c.code} (Bongkar)`;
+      }
+      if (c.actionType === 'BONGKAR_PASANG') {
+        return `⇄ ${c.qty} ${c.code} (B/P)`;
+      }
+      return `${c.qty} ${c.code}`;
+    });
+}
+
+function getRomanSectionForPackage(
+  code: string,
+  category: string
+): RabRomanSection {
+  const upper = code.toUpperCase();
+  if (upper.startsWith('P12')) return 'II';
+  if (category === 'TIANG') return 'I';
+  if (category === 'JTM') return 'II';
+  if (category === 'GARDU') return 'III';
+  if (category === 'SWITCHING') return 'IV';
+  if (category === 'SKUTM') return 'V';
+  if (category === 'SKUR' || category === 'ANCHOR') return 'VIII';
+  if (category === 'GROUNDING') return 'IX';
+  if (category === 'JTR' || category === 'SKUTR' || category === 'SR') {
+    return 'X';
+  }
+  if (category === 'BONGKAR') {
+    return upper.includes('BP-') ? 'XIV' : 'XV';
+  }
+  return 'X';
 }
 
 export interface GenerateRabOptions {
@@ -523,7 +692,10 @@ export interface GenerateRabOptions {
 
 /**
  * Meng-generate daftar item RAB otomatis dari gambar survei tiang, gardu, titik konstruksi & multi-kabel per gawang
- * berdasarkan Standar Konstruksi PRK 2019 & Acuan Harga KHS HSS 2020 PT. PLN (PERSERO) UID JAWA TENGAH
+ * berdasarkan Standar Konstruksi PRK 2019 & Acuan Harga KHS HSS 2020 PT. PLN (PERSERO) UID JAWA TENGAH.
+ * Mendukung format hierarki sesuai Contoh_Format_RAB.pdf:
+ * - Baris Header Konstruksi (`+` | `MJ6-T` | `Unit` | `Vol`) diikuti rincian materialnya (`1, 2, 3...`)
+ * - Jasa Pembongkaran otomatis pada Seksi XIV / XV apabila ada tiang/konstruksi yang ditandai BONGKAR (Simbol X Merah).
  */
 export function generateRabItemsFromSurvey(
   options: GenerateRabOptions
@@ -535,34 +707,52 @@ export function generateRabItemsFromSurvey(
     transportasiRit = 1,
   } = options;
 
-  // Map akumulator volume per KHS ID
-  const khsVolumeMap = new Map<
+  // Map akumulator volume untuk item langsung tanpa header paket (Seksi I Tiang Beton, VI/XI Penghantar, XIV/XV Bongkar, XVI Transportasi)
+  const directKhsVolumeMap = new Map<
     string,
-    { volume: number; sources: Set<string> }
+    { volume: number; sources: Set<string>; sectionOverride?: RabRomanSection }
   >();
 
-  const addKhsVolume = (khsId: string, qty: number, sourceLabel: string) => {
+  const addDirectKhsVolume = (
+    khsId: string,
+    qty: number,
+    sourceLabel: string,
+    sectionOverride?: RabRomanSection
+  ) => {
     if (qty <= 0) return;
     if (!KHS_MASTER_CATALOG[khsId]) return;
-    const existing = khsVolumeMap.get(khsId);
+    const mapKey = sectionOverride ? `${sectionOverride}::${khsId}` : khsId;
+    const existing = directKhsVolumeMap.get(mapKey);
     if (existing) {
       existing.volume = Math.round((existing.volume + qty) * 100) / 100;
       existing.sources.add(sourceLabel);
     } else {
-      khsVolumeMap.set(khsId, {
+      directKhsVolumeMap.set(mapKey, {
         volume: Math.round(qty * 100) / 100,
         sources: new Set([sourceLabel]),
+        sectionOverride,
       });
     }
   };
 
+  // Map akumulator untuk Paket Konstruksi ber-header (+ MJ6-T, + CJ5, + CC1-A, + DB01, dll.) sesuai Contoh_Format_RAB.pdf
+  interface GroupedPackageAccumulator {
+    code: string;
+    section: RabRomanSection;
+    totalPkgQty: number;
+    sources: Set<string>;
+    componentVolumes: Map<string, number>;
+  }
+  const packageGroupsMap = new Map<string, GroupedPackageAccumulator>();
+
   let plannedPoleCount = 0;
 
-  // 1. Ekspansi konstruksi pada Tiang Rencana & Titik Konstruksi Baru (TIANG_RENCANA & TITIK_APP)
+  // 1. Proses seluruh titik (baik Rencana maupun Eksisting bila ada pembongkaran atau penambahan konstruksi)
   nodes.forEach((node) => {
-    if (node.kind !== 'TIANG_RENCANA' && node.kind !== 'TITIK_APP') {
-      return;
-    }
+    const isPlannedNode =
+      node.kind === 'TIANG_RENCANA' ||
+      node.kind === 'GARDU_RENCANA' ||
+      node.kind === 'TITIK_APP';
 
     node.constructions.forEach((assignment) => {
       if (assignment.qty <= 0) return;
@@ -571,12 +761,100 @@ export function generateRabItemsFromSurvey(
       );
       if (!pkg) return;
 
+      const effectiveAction =
+        assignment.actionType ||
+        (node.isBongkar ? 'BONGKAR' : isPlannedNode ? 'PASANG' : 'NONE');
+
+      if (effectiveAction === 'NONE' && pkg.category !== 'BONGKAR') {
+        return;
+      }
+
       const disabledSet = new Set(assignment.disabledKhsIds || []);
       const customQtyMap = assignment.customComponentQty || {};
+      const sourceLabel = `${node.kodeTiang} (${assignment.qty}x ${pkg.code})`;
 
-      if (pkg.category === 'TIANG') {
-        plannedPoleCount += assignment.qty;
+      // Kasus A: Konstruksi ditandai BONGKAR atau Paket Kategori BONGKAR
+      if (effectiveAction === 'BONGKAR' || pkg.category === 'BONGKAR') {
+        if (pkg.category === 'BONGKAR') {
+          pkg.components.forEach((comp) => {
+            if (disabledSet.has(comp.khsId)) return;
+            const unitQty =
+              customQtyMap[comp.khsId] !== undefined
+                ? Math.max(0, Number(customQtyMap[comp.khsId]))
+                : comp.qty;
+            if (unitQty <= 0) return;
+            addDirectKhsVolume(
+              comp.khsId,
+              unitQty * assignment.qty,
+              `${node.kodeTiang} (Bongkar ${pkg.code})`
+            );
+          });
+        } else {
+          const bongkarId = pkg.bongkarKhsId || 'JASA_BONGKAR_JTR';
+          if (!disabledSet.has(bongkarId)) {
+            const unitQty =
+              customQtyMap[bongkarId] !== undefined
+                ? Math.max(0, Number(customQtyMap[bongkarId]))
+                : 1;
+            addDirectKhsVolume(
+              bongkarId,
+              unitQty * assignment.qty,
+              `${node.kodeTiang} (Bongkar ${pkg.code})`,
+              'XV'
+            );
+          }
+        }
+        return;
       }
+
+      // Kasus B: BONGKAR_PASANG -> masukkan jasa bongkar ke Seksi XV (atau XIV) dan lanjutkan pemasangan konstruksi
+      if (effectiveAction === 'BONGKAR_PASANG' && pkg.bongkarKhsId) {
+        if (!disabledSet.has(pkg.bongkarKhsId)) {
+          const unitQty =
+            customQtyMap[pkg.bongkarKhsId] !== undefined
+              ? Math.max(0, Number(customQtyMap[pkg.bongkarKhsId]))
+              : 1;
+          addDirectKhsVolume(
+            pkg.bongkarKhsId,
+            unitQty * assignment.qty,
+            `${node.kodeTiang} (Bongkar-Pasang ${pkg.code})`,
+            'XV'
+          );
+        }
+      }
+
+      // Kasus C: Pemasangan Tiang Beton (C9-200, C12-350, dll. pada Seksi I. TIANG)
+      const isConcretePolePackage =
+        pkg.category === 'TIANG' && !pkg.code.toUpperCase().startsWith('P12');
+
+      if (isConcretePolePackage) {
+        plannedPoleCount += assignment.qty;
+        pkg.components.forEach((comp) => {
+          if (disabledSet.has(comp.khsId)) return;
+          const unitQty =
+            customQtyMap[comp.khsId] !== undefined
+              ? Math.max(0, Number(customQtyMap[comp.khsId]))
+              : comp.qty;
+          if (unitQty <= 0) return;
+          addDirectKhsVolume(comp.khsId, unitQty * assignment.qty, sourceLabel, 'I');
+        });
+        return;
+      }
+
+      // Kasus D: Paket Konstruksi Standar (MJ6-T, CJ5, SJ5, SJ6, CC1-A, SE1-2, F1-2, CM2-12, DB01, P12C-2, dll.)
+      // Ditampilkan dengan baris Header "+ | <Kode Konstruksi> | Unit | <Vol>" diikuti rincian materialnya 1, 2, 3...
+      const pkgSection = getRomanSectionForPackage(pkg.code, pkg.category);
+      const existingGrp = packageGroupsMap.get(pkg.code);
+      const grp: GroupedPackageAccumulator = existingGrp || {
+        code: pkg.code,
+        section: pkgSection,
+        totalPkgQty: 0,
+        sources: new Set<string>(),
+        componentVolumes: new Map<string, number>(),
+      };
+
+      grp.totalPkgQty = Math.round((grp.totalPkgQty + assignment.qty) * 100) / 100;
+      grp.sources.add(sourceLabel);
 
       pkg.components.forEach((comp) => {
         if (disabledSet.has(comp.khsId)) return;
@@ -585,28 +863,38 @@ export function generateRabItemsFromSurvey(
             ? Math.max(0, Number(customQtyMap[comp.khsId]))
             : comp.qty;
         if (unitQty <= 0) return;
-        addKhsVolume(
+        const addedVol = Math.round(unitQty * assignment.qty * 100) / 100;
+        const prevVol = grp.componentVolumes.get(comp.khsId) || 0;
+        grp.componentVolumes.set(
           comp.khsId,
-          unitQty * assignment.qty,
-          `${node.kodeTiang} (${assignment.qty}x ${pkg.code})`
+          Math.round((prevVol + addedVol) * 100) / 100
         );
       });
+
+      if (grp.componentVolumes.size > 0) {
+        packageGroupsMap.set(pkg.code, grp);
+      }
     });
   });
 
   // Tambahkan Pembetonan Tiang Rencana bila diaktifkan
   if (includePembetonanTiang && plannedPoleCount > 0) {
-    addKhsVolume(
+    addDirectKhsVolume(
       'JASA_PEMBETONAN_TIANG',
       plannedPoleCount,
-      `Pondasi ${plannedPoleCount} Tiang Rencana`
+      `Pondasi ${plannedPoleCount} Tiang Rencana`,
+      'I'
     );
   }
 
-  // 2. Ekspansi tarikan kabel / penghantar dari seluruh kabel berstatus RENCANA di setiap Gawang (mendukung >1 kabel per gawang)
+  // 2. Ekspansi tarikan kabel / penghantar dari seluruh kabel di setiap Gawang (Pasang Baru vs Bongkar)
   const conductorLengthTotals = new Map<
     string,
     { rawMeters: number; wireWeightedMeters: number; spanCount: number }
+  >();
+  const bongkarCableTotals = new Map<
+    string,
+    { rawMeters: number; spanCount: number; jenisJaringan: NetworkCategory }
   >();
 
   spans.forEach((span) => {
@@ -620,8 +908,30 @@ export function generateRabItemsFromSurvey(
 
     const spanCables = getEffectiveSpanCables(span);
     spanCables.forEach((cable) => {
-      if (cable.statusJaringan !== 'RENCANA') return;
       const circuits = Math.max(1, cable.circuitCount || 1);
+      // Bila kabel/gawang ditandai BONGKAR (Simbol X Merah), masukkan ke Jasa Pembongkaran Penghantar (Seksi XV)
+      if (isCableMarkedBongkar(cable, span)) {
+        const netCat =
+          cable.jenisJaringan ||
+          inferNetworkCategoryFromConductor(cable.conductorType);
+        const bongkarKhsId =
+          netCat === 'JTM'
+            ? 'JASA_BONGKAR_JTM_AAAC_PER_50M'
+            : netCat === 'SR'
+            ? 'JASA_BONGKAR_SR_1P'
+            : 'JASA_BONGKAR_LVTC_PER_50M';
+        const curBongkar = bongkarCableTotals.get(bongkarKhsId) || {
+          rawMeters: 0,
+          spanCount: 0,
+          jenisJaringan: netCat,
+        };
+        curBongkar.rawMeters += effectiveDistance * circuits;
+        curBongkar.spanCount += circuits;
+        bongkarCableTotals.set(bongkarKhsId, curBongkar);
+        return;
+      }
+
+      if (cable.statusJaringan !== 'RENCANA') return;
       const mapping =
         CONDUCTOR_KHS_MAPPING[
           cable.conductorType as keyof typeof CONDUCTOR_KHS_MAPPING
@@ -631,8 +941,6 @@ export function generateRabItemsFromSurvey(
         cable.phaseCount
       );
 
-      // Untuk kawat JTM terbuka (AAAC / AAAC-S dengan phaseMultiplier default 3),
-      // bila dipilih 1 Phase maka menggunakan 1 kawat penghantar, bila 3 Phase menggunakan 3 kawat penghantar.
       const effectiveWireMultiplier =
         mapping && mapping.phaseMultiplier === 3 ? phaseCount : 1;
 
@@ -649,72 +957,229 @@ export function generateRabItemsFromSurvey(
     });
   });
 
+  // Masukkan Jasa Pembongkaran Kabel / Penghantar ke Seksi XV
+  bongkarCableTotals.forEach((bTotals, bongkarKhsId) => {
+    const vol =
+      bongkarKhsId === 'JASA_BONGKAR_SR_1P'
+        ? Math.max(1, bTotals.spanCount)
+        : Math.max(bTotals.spanCount, Math.ceil(bTotals.rawMeters / 50));
+    addDirectKhsVolume(
+      bongkarKhsId,
+      vol,
+      `Bongkar ${bTotals.spanCount} Gawang Kabel ${bTotals.jenisJaringan} (${bTotals.rawMeters}m)`,
+      'XV'
+    );
+  });
+
   conductorLengthTotals.forEach((totals, conductorType) => {
     const mapping =
       CONDUCTOR_KHS_MAPPING[conductorType as keyof typeof CONDUCTOR_KHS_MAPPING];
     if (!mapping) return;
 
-    // Panjang total termasuk faktor andongan (sag/waste) & pengali fasa (1 fasa vs 3 fasa)
     const totalLengthWithAndongan = Math.ceil(
       totals.wireWeightedMeters * mapping.andonganFactor
     );
 
-    addKhsVolume(
+    addDirectKhsVolume(
       mapping.mduKhsId,
       totalLengthWithAndongan,
       `${totals.spanCount} Gawang (${totals.rawMeters}m + andongan)`
     );
 
-    // Jasa penarikan penghantar (per gawang / per 50m)
     const gawangVolume = Math.max(
       totals.spanCount,
       Math.ceil(totals.rawMeters / 50)
     );
-    addKhsVolume(
+    addDirectKhsVolume(
       mapping.jasaKhsId,
       gawangVolume,
       `Tarik ${totals.spanCount} Gawang (${totals.rawMeters}m)`
     );
   });
 
-  // 3. Tambahkan Transportasi Material jika ada pekerjaan rencana
-  if (transportasiRit > 0 && khsVolumeMap.size > 0) {
-    addKhsVolume(
+  // 3. Tambahkan Transportasi Material jika ada pekerjaan rencana / bongkar
+  if (
+    transportasiRit > 0 &&
+    (directKhsVolumeMap.size > 0 || packageGroupsMap.size > 0)
+  ) {
+    addDirectKhsVolume(
       'JASA_TRANSPORTASI_MATERIAL',
       transportasiRit,
-      'Angkutan Material & Tiang'
+      'Angkutan Material & Tiang',
+      'XVI'
     );
   }
 
-  // 4. Konversi ke array RabLineItem terurut sesuai Seksi Romawi I s/d XVI
-  const sectionOrder = RAB_ROMAN_SECTIONS.map((s) => s.code);
+  // 4. Susun RabLineItem per Seksi Romawi I s/d XVI sesuai Contoh_Format_RAB.pdf
   const generatedItems: RabLineItem[] = [];
+  const golOrder = { 'MDU-KD': 1, HDW: 2, JASA: 3 };
 
-  Array.from(khsVolumeMap.entries()).forEach(([khsId, data], idx) => {
-    const khs = KHS_MASTER_CATALOG[khsId];
-    if (!khs) return;
-    generatedItems.push({
-      id: `rab-auto-${khsId}-${idx}`,
-      section: khs.section,
-      uraian: khs.uraian,
-      gol: khs.gol,
-      satuan: khs.satuan,
-      volume: data.volume,
-      hargaSatuan: khs.hargaSatuan,
-      sourceInfo: Array.from(data.sources).slice(0, 3).join(', '),
+  RAB_ROMAN_SECTIONS.forEach((sec) => {
+    // 4a. Masukkan item langsung pada seksi ini (misal: Seksi I Tiang Beton, Seksi VI/XI Penghantar, Seksi XIV/XV Bongkar, Seksi XVI Transportasi)
+    const directEntriesForSec: Array<{
+      khsId: string;
+      volume: number;
+      sources: Set<string>;
+      section: RabRomanSection;
+    }> = [];
+
+    directKhsVolumeMap.forEach((data, mapKey) => {
+      const khsId = mapKey.includes('::') ? mapKey.split('::')[1] : mapKey;
+      const khs = KHS_MASTER_CATALOG[khsId];
+      if (!khs) return;
+      const targetSec = data.sectionOverride || khs.section;
+      if (targetSec === sec.code) {
+        directEntriesForSec.push({
+          khsId,
+          volume: data.volume,
+          sources: data.sources,
+          section: targetSec,
+        });
+      }
+    });
+
+    directEntriesForSec.sort((a, b) => {
+      const ka = KHS_MASTER_CATALOG[a.khsId];
+      const kb = KHS_MASTER_CATALOG[b.khsId];
+      return golOrder[ka.gol] - golOrder[kb.gol];
+    });
+
+    directEntriesForSec.forEach((entry, idx) => {
+      const khs = KHS_MASTER_CATALOG[entry.khsId];
+      generatedItems.push({
+        id: `rab-auto-${sec.code}-${entry.khsId}-${idx}`,
+        section: sec.code,
+        uraian: khs.uraian,
+        gol: khs.gol,
+        satuan: khs.satuan,
+        volume: entry.volume,
+        hargaSatuan: khs.hargaSatuan,
+        itemNo: idx + 1,
+        sourceInfo: Array.from(entry.sources).slice(0, 3).join(', '),
+      });
+    });
+
+    // 4b. Masukkan grup Paket Konstruksi pada seksi ini:
+    // Baris Header: NO = "+", URAIAN = "<Kode Konstruksi>" (misal MJ6-T), SAT = "Unit", VOL = <totalPkgQty>
+    // Diikuti baris detail komponen 1, 2, 3...
+    packageGroupsMap.forEach((grp) => {
+      if (grp.section !== sec.code) return;
+
+      generatedItems.push({
+        id: `rab-pkg-header-${sec.code}-${grp.code}`,
+        section: sec.code,
+        uraian: grp.code,
+        gol: 'HDW',
+        satuan: 'Unit',
+        volume: grp.totalPkgQty,
+        hargaSatuan: 0,
+        isPackageHeader: true,
+        parentPackageCode: grp.code,
+        sourceInfo: Array.from(grp.sources).slice(0, 3).join(', '),
+      });
+
+      let compItemNo = 1;
+      const pkgCatalogDef = CONSTRUCTION_PACKAGES_CATALOG.find(
+        (p) => p.code.toUpperCase() === grp.code.toUpperCase()
+      );
+      grp.componentVolumes.forEach((vol, khsId) => {
+        const khs = KHS_MASTER_CATALOG[khsId];
+        if (!khs || vol <= 0) return;
+        const catalogComp = pkgCatalogDef?.components.find(
+          (c) => c.khsId === khsId
+        );
+        const unitQtyPerPackage =
+          grp.totalPkgQty > 0
+            ? Math.round((vol / grp.totalPkgQty) * 10000) / 10000
+            : catalogComp?.qty || 1;
+
+        generatedItems.push({
+          id: `rab-pkg-item-${sec.code}-${grp.code}-${khsId}`,
+          section: sec.code,
+          uraian: khs.uraian,
+          gol: khs.gol,
+          satuan: khs.satuan,
+          volume: vol,
+          hargaSatuan: khs.hargaSatuan,
+          khsId,
+          itemNo: compItemNo++,
+          parentPackageCode: grp.code,
+          unitQtyPerPackage,
+          sourceInfo: `${grp.code} (${grp.totalPkgQty} Unit)`,
+        });
+      });
     });
   });
 
-  generatedItems.sort((a, b) => {
-    const secDiff =
-      sectionOrder.indexOf(a.section) - sectionOrder.indexOf(b.section);
-    if (secDiff !== 0) return secDiff;
-    // Urutkan MDU-KD -> HDW -> JASA di dalam seksi yang sama
-    const golOrder = { 'MDU-KD': 1, HDW: 2, JASA: 3 };
-    return golOrder[a.gol] - golOrder[b.gol];
-  });
-
   return generatedItems;
+}
+
+/**
+ * Mengubah volume set utama pada baris Header Paket Konstruksi (+ | SJ6 | Unit | Vol) di Tabel RAB
+ * dan secara otomatis mengalikan seluruh volume detail material di bawahnya berdasarkan unitQtyPerPackage
+ * (aman terhadap nilai sementara 0 saat pengguna menekan Backspace sebelum mengetik angka baru).
+ */
+export function updateRabPackageHeaderVolume(
+  items: RabLineItem[],
+  headerId: string,
+  nextPkgVolRaw: number
+): RabLineItem[] {
+  const headerItem = items.find((r) => r.id === headerId);
+  if (!headerItem || !headerItem.isPackageHeader) {
+    return items;
+  }
+
+  const nextPkgVol = Math.max(0, Number(nextPkgVolRaw) || 0);
+  const pkgCode = (
+    headerItem.parentPackageCode ||
+    headerItem.uraian ||
+    ''
+  ).toUpperCase();
+  const pkgDef = CONSTRUCTION_PACKAGES_CATALOG.find(
+    (p) => p.code.toUpperCase() === pkgCode
+  );
+  const oldPkgVol =
+    Number(headerItem.volume) > 0 ? Number(headerItem.volume) : 1;
+
+  return items.map((row) => {
+    if (row.id === headerId) {
+      return {
+        ...row,
+        volume: nextPkgVol,
+      };
+    }
+
+    if (
+      !row.isPackageHeader &&
+      row.parentPackageCode &&
+      row.parentPackageCode.toUpperCase() === pkgCode &&
+      row.section === headerItem.section
+    ) {
+      let baseUnitQty = row.unitQtyPerPackage;
+      if (baseUnitQty === undefined || baseUnitQty <= 0) {
+        const matchedComp = pkgDef?.components.find((comp) => {
+          if (row.khsId && comp.khsId === row.khsId) return true;
+          const khs = KHS_MASTER_CATALOG[comp.khsId];
+          return khs && khs.uraian === row.uraian;
+        });
+        if (matchedComp) {
+          baseUnitQty = matchedComp.qty;
+        } else if (row.volume > 0 && oldPkgVol > 0) {
+          baseUnitQty = Math.round((row.volume / oldPkgVol) * 10000) / 10000;
+        } else {
+          baseUnitQty = 1;
+        }
+      }
+
+      return {
+        ...row,
+        unitQtyPerPackage: baseUnitQty,
+        volume: Math.round(baseUnitQty * nextPkgVol * 100) / 100,
+      };
+    }
+
+    return row;
+  });
 }
 
 export interface RabRowCostBreakdown {
@@ -729,9 +1194,14 @@ export interface RabRowCostBreakdown {
  * sesuai format resmi RAB PT. PLN (PERSERO) UID JAWA TENGAH
  */
 export function calculateRabRowBreakdown(
-  item: Pick<RabLineItem, 'gol' | 'volume' | 'hargaSatuan'>
+  item: Pick<RabLineItem, 'gol' | 'volume' | 'hargaSatuan' | 'isPackageHeader'>
 ): RabRowCostBreakdown {
-  const total = Math.round((Number(item.volume) || 0) * (Number(item.hargaSatuan) || 0));
+  if (item.isPackageHeader) {
+    return { mdu: 0, hardware: 0, jasa: 0, jumlah: 0 };
+  }
+  const total = Math.round(
+    (Number(item.volume) || 0) * (Number(item.hargaSatuan) || 0)
+  );
   if (item.gol === 'MDU-KD') {
     return { mdu: total, hardware: 0, jasa: 0, jumlah: total };
   }
@@ -764,6 +1234,7 @@ export function calculateRabSummary(
   let subTotalJasa = 0;
 
   items.forEach((item) => {
+    if (item.isPackageHeader) return;
     const row = calculateRabRowBreakdown(item);
     subTotalMdu += row.mdu;
     subTotalHardware += row.hardware;
@@ -868,3 +1339,571 @@ export function numberToTerbilangRupiah(amount: number): string {
   const words = convertNumberToWordsId(rounded).replace(/\s+/g, ' ').trim();
   return `${words} Rupiah`;
 }
+
+export interface EtiketRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface EtiketProjectedNodeInput {
+  id: string;
+  kodeTiang: string;
+  kind: SurveyPoleNode['kind'];
+  x: number;
+  y: number;
+  lines: string[];
+}
+
+export interface EtiketProjectedSpanInput {
+  id: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  badgeText: string;
+  badgeW: number;
+  badgeH?: number;
+}
+
+export interface EtiketPlacedNodeCallout {
+  id: string;
+  pt: { x: number; y: number };
+  lines: string[];
+  boxX: number;
+  boxY: number;
+  boxWidth: number;
+  boxHeight: number;
+  anchorX: number;
+  anchorY: number;
+  placeRight: boolean;
+}
+
+export interface EtiketPlacedSpanBadge {
+  id: string;
+  centerX: number;
+  centerY: number;
+  boxX: number;
+  boxY: number;
+  badgeW: number;
+  badgeH: number;
+}
+
+export interface EtiketLayoutResult {
+  nodePlacements: EtiketPlacedNodeCallout[];
+  spanBadges: EtiketPlacedSpanBadge[];
+  mainRoadLabelCenter: { x: number; y: number };
+  simpangRoadLabelCenter: { x: number; y: number };
+  allPlacedRects: EtiketRect[];
+}
+
+/**
+ * Mengecek apakah dua kotak (bounding box) saling bertabrakan/menumpuk dengan margin `pad`
+ */
+export function rectsOverlap(
+  a: EtiketRect,
+  b: EtiketRect,
+  pad: number = 4
+): boolean {
+  return (
+    a.x - pad < b.x + b.w &&
+    a.x + a.w + pad > b.x &&
+    a.y - pad < b.y + b.h &&
+    a.y + a.h + pad > b.y
+  );
+}
+
+function ccw(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  cx: number,
+  cy: number
+): boolean {
+  return (cy - ay) * (bx - ax) > (by - ay) * (cx - ax);
+}
+
+function segmentsIntersect(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  x3: number,
+  y3: number,
+  x4: number,
+  y4: number
+): boolean {
+  return (
+    ccw(x1, y1, x3, y3, x4, y4) !== ccw(x2, y2, x3, y3, x4, y4) &&
+    ccw(x1, y1, x2, y2, x3, y3) !== ccw(x1, y1, x2, y2, x4, y4)
+  );
+}
+
+function segmentIntersectsRect(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  r: EtiketRect,
+  pad: number = 2
+): boolean {
+  const rx = r.x - pad;
+  const ry = r.y - pad;
+  const rw = r.w + pad * 2;
+  const rh = r.h + pad * 2;
+
+  const minX = Math.min(x1, x2);
+  const maxX = Math.max(x1, x2);
+  const minY = Math.min(y1, y2);
+  const maxY = Math.max(y1, y2);
+  if (maxX < rx || minX > rx + rw || maxY < ry || minY > ry + rh) {
+    return false;
+  }
+  if (
+    (x1 >= rx && x1 <= rx + rw && y1 >= ry && y1 <= ry + rh) ||
+    (x2 >= rx && x2 <= rx + rw && y2 >= ry && y2 <= ry + rh)
+  ) {
+    return true;
+  }
+  return (
+    segmentsIntersect(x1, y1, x2, y2, rx, ry, rx + rw, ry) ||
+    segmentsIntersect(x1, y1, x2, y2, rx + rw, ry, rx + rw, ry + rh) ||
+    segmentsIntersect(x1, y1, x2, y2, rx, ry + rh, rx + rw, ry + rh) ||
+    segmentsIntersect(x1, y1, x2, y2, rx, ry, rx, ry + rh)
+  );
+}
+
+/**
+ * Menghitung tata letak (layout) 2D bebas tumpukan (zero-overlap) untuk seluruh elemen Gambar Sketsa Etiket PLN:
+ * - Kotak keterangan konstruksi tiang (SA4-20/1..N)
+ * - Label jarak & kabel gawang (`25m (JTR ///)`)
+ * - Label Nama Jalan Utama & Simpang Jalan Desa
+ * Menjamin tidak ada kotak callout, simbol tiang, badge gawang, maupun label jalan yang saling menumpuk.
+ */
+export function computeEtiketCalloutLayout(params: {
+  nodes: EtiketProjectedNodeInput[];
+  spans: EtiketProjectedSpanInput[];
+  defaultMainRoadCenter: { x: number; y: number };
+  defaultSimpangRoadCenter: { x: number; y: number };
+  showRoadSketch?: boolean;
+}): EtiketLayoutResult {
+  const {
+    nodes,
+    spans,
+    defaultMainRoadCenter,
+    defaultSimpangRoadCenter,
+    showRoadSketch = true,
+  } = params;
+
+  const SVG_MIN_X = 10;
+  const SVG_MAX_X = 910;
+  const SVG_MIN_Y = 10;
+  const SVG_MAX_Y = 450;
+
+  // Obstacle list: starts with North Arrow (U) and all Pole Symbols
+  const obstacles: EtiketRect[] = [
+    // North Arrow at (55, 55), radius 28
+    { x: 24, y: 24, w: 62, h: 62 },
+  ];
+
+  const poleRects: EtiketRect[] = nodes.map((n) => ({
+    x: n.x - 13,
+    y: n.y - 13,
+    w: 26,
+    h: 26,
+  }));
+  obstacles.push(...poleRects);
+
+  // 1. Place Span Midpoint Badges without overlapping poles or other span badges
+  const spanBadges: EtiketPlacedSpanBadge[] = spans.map((sp) => {
+    const badgeW = sp.badgeW;
+    const badgeH = sp.badgeH ?? 16;
+    const midX = (sp.x1 + sp.x2) / 2;
+    const midY = (sp.y1 + sp.y2) / 2;
+    const dx = sp.x2 - sp.x1;
+    const dy = sp.y2 - sp.y1;
+    const segLen = Math.max(1, Math.hypot(dx, dy));
+    const nx = -dy / segLen;
+    const ny = dx / segLen;
+    const tx = dx / segLen;
+    const ty = dy / segLen;
+
+    const offsets: Array<[number, number]> = [
+      [0, 0],
+      [16, 0],
+      [-16, 0],
+      [0, 12],
+      [0, -12],
+      [26, 0],
+      [-26, 0],
+      [20, 12],
+      [-20, -12],
+      [36, 0],
+      [-36, 0],
+    ];
+
+    let chosenCenter = { x: midX, y: midY };
+    for (const [dn, dt] of offsets) {
+      const cx = Math.max(
+        SVG_MIN_X + badgeW / 2,
+        Math.min(SVG_MAX_X - badgeW / 2, midX + nx * dn + tx * dt)
+      );
+      const cy = Math.max(
+        SVG_MIN_Y + badgeH / 2,
+        Math.min(SVG_MAX_Y - badgeH / 2, midY + ny * dn + ty * dt)
+      );
+      const candidateRect: EtiketRect = {
+        x: cx - badgeW / 2,
+        y: cy - badgeH / 2,
+        w: badgeW,
+        h: badgeH,
+      };
+      const hasCollision = obstacles.some((obs) =>
+        rectsOverlap(candidateRect, obs, 3)
+      );
+      if (!hasCollision) {
+        chosenCenter = { x: cx, y: cy };
+        break;
+      }
+    }
+
+    const finalRect: EtiketRect = {
+      x: chosenCenter.x - badgeW / 2,
+      y: chosenCenter.y - badgeH / 2,
+      w: badgeW,
+      h: badgeH,
+    };
+    obstacles.push(finalRect);
+
+    return {
+      id: sp.id,
+      centerX: chosenCenter.x,
+      centerY: chosenCenter.y,
+      boxX: finalRect.x,
+      boxY: finalRect.y,
+      badgeW,
+      badgeH,
+    };
+  });
+
+  // 2. Place Pole Callout Boxes with 2D directional candidates + grid fallback
+  const placedCalloutRects: EtiketRect[] = [];
+  const placedLeaders: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+
+  const nodePlacements: EtiketPlacedNodeCallout[] = nodes.map((n, idx) => {
+    const boxWidth = 124;
+    const boxHeight = Math.max(26, 15 + n.lines.length * 10);
+
+    const preferRight =
+      n.kind === 'GARDU_TRAFO' || n.kind === 'GARDU_RENCANA'
+        ? false
+        : idx % 2 === 0;
+
+    const candidatePositions: Array<{ x: number; y: number; preferred: boolean }> = [];
+    const radii = [32, 54, 78, 106, 138];
+
+    radii.forEach((r) => {
+      const yOffsets = [
+        -boxHeight / 2,
+        -boxHeight + 8,
+        -6,
+        -boxHeight - 10,
+        12,
+        -boxHeight - 28,
+        28,
+      ];
+      const rightX = n.x + r;
+      const leftX = n.x - boxWidth - r;
+
+      const sidePairs = preferRight
+        ? [
+            { x: rightX, pref: true },
+            { x: leftX, pref: false },
+          ]
+        : [
+            { x: leftX, pref: true },
+            { x: rightX, pref: false },
+          ];
+
+      sidePairs.forEach((side) => {
+        yOffsets.forEach((yo) => {
+          candidatePositions.push({
+            x: side.x,
+            y: n.y + yo,
+            preferred: side.pref,
+          });
+        });
+      });
+
+      // Above and below candidates (especially helpful at the top or bottom of a road curve)
+      const xOffsets = [
+        -boxWidth / 2,
+        12,
+        -boxWidth - 12,
+        -boxWidth * 0.25,
+        -boxWidth * 0.75,
+        36,
+        -boxWidth - 36,
+      ];
+      xOffsets.forEach((xo) => {
+        candidatePositions.push({
+          x: n.x + xo,
+          y: n.y - boxHeight - r * 0.75,
+          preferred: false,
+        });
+        candidatePositions.push({
+          x: n.x + xo,
+          y: n.y + r * 0.75,
+          preferred: false,
+        });
+      });
+    });
+
+    // Add full 2D canvas grid fallback sorted by distance to pole (n.x, n.y)
+    const gridCandidates: Array<{ x: number; y: number; dist: number }> = [];
+    for (let gx = SVG_MIN_X; gx <= SVG_MAX_X - boxWidth; gx += 26) {
+      for (let gy = SVG_MIN_Y; gy <= SVG_MAX_Y - boxHeight; gy += 20) {
+        const cx = gx + boxWidth / 2;
+        const cy = gy + boxHeight / 2;
+        gridCandidates.push({
+          x: gx,
+          y: gy,
+          dist: Math.hypot(cx - n.x, cy - n.y),
+        });
+      }
+    }
+    gridCandidates.sort((a, b) => a.dist - b.dist);
+    gridCandidates.forEach((gc) => {
+      candidatePositions.push({ x: gc.x, y: gc.y, preferred: false });
+    });
+
+    let bestX = Math.max(
+      SVG_MIN_X,
+      Math.min(SVG_MAX_X - boxWidth, preferRight ? n.x + 34 : n.x - boxWidth - 34)
+    );
+    let bestY = Math.max(
+      SVG_MIN_Y,
+      Math.min(SVG_MAX_Y - boxHeight, n.y - boxHeight / 2)
+    );
+    let bestScore = Infinity;
+
+    for (const cand of candidatePositions) {
+      if (
+        cand.x < SVG_MIN_X ||
+        cand.x + boxWidth > SVG_MAX_X ||
+        cand.y < SVG_MIN_Y ||
+        cand.y + boxHeight > SVG_MAX_Y
+      ) {
+        continue;
+      }
+
+      const candRect: EtiketRect = {
+        x: cand.x,
+        y: cand.y,
+        w: boxWidth,
+        h: boxHeight,
+      };
+
+      // Hard check: must NOT overlap any obstacle (other callouts, pole circles, span badges, North arrow)
+      if (obstacles.some((obs) => rectsOverlap(candRect, obs, 5))) {
+        continue;
+      }
+
+      const anchorX = Math.max(cand.x, Math.min(cand.x + boxWidth, n.x));
+      const anchorY = Math.max(cand.y, Math.min(cand.y + boxHeight, n.y));
+      const dist = Math.hypot(anchorX - n.x, anchorY - n.y);
+
+      let penalty = dist;
+      if (cand.preferred) {
+        penalty -= 14;
+      }
+
+      // Penalize if this pole's leader line cuts through any already-placed callout box
+      for (const prevBox of placedCalloutRects) {
+        if (segmentIntersectsRect(n.x, n.y, anchorX, anchorY, prevBox, 3)) {
+          penalty += 500;
+        }
+      }
+
+      // Penalize if any previous pole's leader line cuts through this candidate callout box
+      for (const prevLeader of placedLeaders) {
+        if (
+          segmentIntersectsRect(
+            prevLeader.x1,
+            prevLeader.y1,
+            prevLeader.x2,
+            prevLeader.y2,
+            candRect,
+            3
+          )
+        ) {
+          penalty += 500;
+        }
+        if (
+          segmentsIntersect(
+            n.x,
+            n.y,
+            anchorX,
+            anchorY,
+            prevLeader.x1,
+            prevLeader.y1,
+            prevLeader.x2,
+            prevLeader.y2
+          )
+        ) {
+          penalty += 250;
+        }
+      }
+
+      // Penalize if the callout box sits directly on top of a span cable line
+      for (const sp of spans) {
+        if (segmentIntersectsRect(sp.x1, sp.y1, sp.x2, sp.y2, candRect, 2)) {
+          penalty += 90;
+        }
+      }
+
+      if (penalty < bestScore) {
+        bestScore = penalty;
+        bestX = Math.round(cand.x * 10) / 10;
+        bestY = Math.round(cand.y * 10) / 10;
+        // Early exit if we found an ideal close candidate with zero leader/span crossings
+        if (penalty < 55) {
+          break;
+        }
+      }
+    }
+
+    const finalRect: EtiketRect = {
+      x: bestX,
+      y: bestY,
+      w: boxWidth,
+      h: boxHeight,
+    };
+    obstacles.push(finalRect);
+    placedCalloutRects.push(finalRect);
+
+    const anchorX = Math.max(bestX, Math.min(bestX + boxWidth, n.x));
+    const anchorY = Math.max(bestY, Math.min(bestY + boxHeight, n.y));
+    placedLeaders.push({ x1: n.x, y1: n.y, x2: anchorX, y2: anchorY });
+
+    const placeRight = bestX + boxWidth / 2 >= n.x;
+
+    return {
+      id: n.id,
+      pt: { x: n.x, y: n.y },
+      lines: n.lines,
+      boxX: bestX,
+      boxY: bestY,
+      boxWidth,
+      boxHeight,
+      anchorX,
+      anchorY,
+      placeRight,
+    };
+  });
+
+  // 3. Place Road Labels (Main Road & Simpang Road) so they NEVER overlap any callout box, pole, or span badge
+  const findNonOverlappingLabelCenter = (
+    defaultCenter: { x: number; y: number },
+    labelW: number,
+    labelH: number
+  ): { x: number; y: number } => {
+    const candidateOffsets: Array<[number, number]> = [
+      [0, 0],
+      [0, 22],
+      [0, -22],
+      [45, 18],
+      [-45, 18],
+      [45, -18],
+      [-45, -18],
+      [85, 24],
+      [-85, 24],
+      [0, 42],
+      [0, -42],
+      [120, 0],
+      [-120, 0],
+      [140, 32],
+      [-140, 32],
+    ];
+
+    for (const [dx, dy] of candidateOffsets) {
+      const cx = defaultCenter.x + dx;
+      const cy = defaultCenter.y + dy;
+      if (
+        cx - labelW / 2 < SVG_MIN_X ||
+        cx + labelW / 2 > SVG_MAX_X ||
+        cy - labelH / 2 < SVG_MIN_Y ||
+        cy + labelH / 2 > SVG_MAX_Y
+      ) {
+        continue;
+      }
+      const rect: EtiketRect = {
+        x: cx - labelW / 2,
+        y: cy - labelH / 2,
+        w: labelW,
+        h: labelH,
+      };
+      if (!obstacles.some((obs) => rectsOverlap(rect, obs, 5))) {
+        obstacles.push(rect);
+        return { x: cx, y: cy };
+      }
+    }
+
+    // Fallback 2D grid scan sorted by distance to defaultCenter
+    let bestCenter = defaultCenter;
+    let bestDist = Infinity;
+    for (
+      let gx = SVG_MIN_X + labelW / 2;
+      gx <= SVG_MAX_X - labelW / 2;
+      gx += 28
+    ) {
+      for (
+        let gy = SVG_MIN_Y + labelH / 2;
+        gy <= SVG_MAX_Y - labelH / 2;
+        gy += 18
+      ) {
+        const rect: EtiketRect = {
+          x: gx - labelW / 2,
+          y: gy - labelH / 2,
+          w: labelW,
+          h: labelH,
+        };
+        if (obstacles.some((obs) => rectsOverlap(rect, obs, 5))) {
+          continue;
+        }
+        const d = Math.hypot(gx - defaultCenter.x, gy - defaultCenter.y);
+        if (d < bestDist) {
+          bestDist = d;
+          bestCenter = { x: gx, y: gy };
+        }
+      }
+    }
+
+    obstacles.push({
+      x: bestCenter.x - labelW / 2,
+      y: bestCenter.y - labelH / 2,
+      w: labelW,
+      h: labelH,
+    });
+    return bestCenter;
+  };
+
+  const mainRoadLabelCenter = showRoadSketch
+    ? findNonOverlappingLabelCenter(defaultMainRoadCenter, 192, 18)
+    : defaultMainRoadCenter;
+
+  const simpangRoadLabelCenter = showRoadSketch
+    ? findNonOverlappingLabelCenter(defaultSimpangRoadCenter, 144, 16)
+    : defaultSimpangRoadCenter;
+
+  return {
+    nodePlacements,
+    spanBadges,
+    mainRoadLabelCenter,
+    simpangRoadLabelCenter,
+    allPlacedRects: obstacles,
+  };
+}
+

@@ -14,6 +14,7 @@ import {
   calculateDaysSinceInput,
   buildTeknikWaNotification,
   normalizePhoneToWa,
+  parseCoordinate,
 } from './plnValidation.ts';
 import { PermohonanItem } from '../types';
 
@@ -372,4 +373,29 @@ test('buildTeknikWaNotification includes customer info, phone number, coordinate
   assert.match(payload.message, /https:\/\/www\.google\.com\/maps\?q=-7\.6062,110\.2195/);
   assert.ok(payload.waUrl.startsWith('https://wa.me/628112500123?text='));
 });
+
+test('INITIAL_PLN_RECORDS has empty petugasSurvei, nomorGardu, and nomorTiang by default', async () => {
+  const { INITIAL_PLN_RECORDS } = await import('../data/initialRecords.ts');
+  for (const rec of INITIAL_PLN_RECORDS) {
+    assert.equal(rec.petugasSurvei, '', `Record ${rec.id} should have empty petugasSurvei`);
+    assert.equal(rec.nomorGardu || '', '', `Record ${rec.id} should have empty nomorGardu`);
+    assert.equal(rec.nomorTiang, '', `Record ${rec.id} should have empty nomorTiang`);
+  }
+});
+
+test('parseCoordinate parses comma-separated, space-separated, and Google Maps URL coordinates', () => {
+  assert.deepEqual(parseCoordinate('-7.592500, 110.215400'), { lat: -7.5925, lng: 110.2154 });
+  assert.deepEqual(parseCoordinate('-7.6079 110.2038'), { lat: -7.6079, lng: 110.2038 });
+  assert.deepEqual(
+    parseCoordinate('https://www.google.com/maps?q=-7.6105,110.2180'),
+    { lat: -7.6105, lng: 110.218 }
+  );
+  assert.deepEqual(
+    parseCoordinate('https://www.google.com/maps/place/Borobudur/@-7.6079,110.2038,17z'),
+    { lat: -7.6079, lng: 110.2038 }
+  );
+  assert.equal(parseCoordinate('invalid-coord'), null);
+});
+
+
 

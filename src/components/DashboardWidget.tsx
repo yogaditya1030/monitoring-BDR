@@ -25,6 +25,7 @@ interface DashboardWidgetProps {
   onSelectStatus: (status: string) => void;
   onSelectTransaksi?: (transaksi: string) => void;
   onSelectRecord?: (record: PermohonanItem) => void;
+  toolbarSlot?: React.ReactNode;
 }
 
 const STAGE_STYLES: Record<
@@ -129,19 +130,15 @@ export const DashboardWidget: React.FC<DashboardWidgetProps> = ({
   onSelectStatus,
   onSelectTransaksi,
   onSelectRecord,
+  toolbarSlot,
 }) => {
-  // Default collapsed so the primary work table is immediately visible above the fold
-  const [isExpanded, setIsExpanded] = useState(false);
+  // Default expanded so the 7 stage cards are visible on the main view
+  const [isExpanded, setIsExpanded] = useState(true);
 
   const summary = useMemo(() => summarizePipelineByStatus(records), [records]);
 
   const totalDayaKva = useMemo(
     () => records.reduce((acc, curr) => acc + (curr.dayaBaru || 0), 0) / 1000,
-    [records]
-  );
-
-  const pfkCount = useMemo(
-    () => records.filter((r) => r.transaksi === 'PFK').length,
     [records]
   );
 
@@ -234,108 +231,9 @@ export const DashboardWidget: React.FC<DashboardWidgetProps> = ({
         </div>
       </div>
 
-      {/* Unified Single-Line Interactive Stage Filter Strip + Thin Progress Bar */}
-      <div className="px-3.5 sm:px-4 py-2.5 bg-slate-50/80 border-b border-slate-200 space-y-2">
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
-          {/* All Button */}
-          <button
-            type="button"
-            onClick={() => {
-              onSelectStatus('ALL');
-              if (onSelectTransaksi) onSelectTransaksi('ALL');
-            }}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition shrink-0 cursor-pointer flex items-center gap-1.5 border ${
-              selectedStatus === 'ALL' && selectedTransaksi === 'ALL'
-                ? 'bg-slate-900 text-white border-slate-900 shadow-2xs'
-                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            <span>Semua</span>
-            <span
-              className={`text-[11px] px-1.5 py-0.2 rounded ${
-                selectedStatus === 'ALL' && selectedTransaksi === 'ALL'
-                  ? 'bg-white/20 text-white'
-                  : 'bg-slate-100 text-slate-700'
-              }`}
-            >
-              {records.length}
-            </span>
-          </button>
-
-          {/* PFK Quick Filter Button */}
-          {onSelectTransaksi && (
-            <button
-              type="button"
-              onClick={() => {
-                if (selectedTransaksi === 'PFK') {
-                  onSelectTransaksi('ALL');
-                } else {
-                  onSelectTransaksi('PFK');
-                  onSelectStatus('ALL');
-                }
-              }}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition shrink-0 cursor-pointer flex items-center gap-1.5 border ${
-                selectedTransaksi === 'PFK'
-                  ? 'bg-rose-600 text-white border-rose-600 shadow-2xs'
-                  : 'bg-amber-50 text-amber-950 border-amber-300 hover:bg-amber-100'
-              }`}
-            >
-              <span>⚡ PFK</span>
-              <span
-                className={`text-[11px] px-1.5 py-0.2 rounded font-extrabold ${
-                  selectedTransaksi === 'PFK'
-                    ? 'bg-white/20 text-white'
-                    : 'bg-amber-200/80 text-amber-950'
-                }`}
-              >
-                {pfkCount}
-              </span>
-            </button>
-          )}
-
-          {/* Stage Buttons */}
-          {visibleStages.map((stage) => {
-            const isSelected = selectedStatus === stage.status;
-            const style = STAGE_STYLES[stage.status];
-            const compactLabel =
-              stage.status === 'MOHON'
-                ? '1. Mohon'
-                : stage.status === 'SURVEI'
-                ? '2. Survei'
-                : stage.status === 'RAB'
-                ? '3. RAB'
-                : stage.status === 'BAYAR'
-                ? '4. Bayar'
-                : stage.status === 'KERJA'
-                ? '5. Kerja & K3L'
-                : stage.status === 'NYALA'
-                ? '6. Nyala TE'
-                : stage.status === 'PDL'
-                ? '7. Selesai PDL'
-                : stage.shortLabel;
-
-            return (
-              <button
-                key={`chip-${stage.status}`}
-                type="button"
-                onClick={() => handleStageClick(stage.status)}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 cursor-pointer flex items-center gap-1.5 border ${
-                  isSelected
-                    ? `${style.activeBg} ${style.activeBorder} text-slate-950 font-bold`
-                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                }`}
-              >
-                <span>{style.icon}</span>
-                <span>{compactLabel}</span>
-                <span
-                  className={`text-[11px] font-bold px-1.5 py-0.2 rounded ${style.badgeBg} ${style.badgeText}`}
-                >
-                  {stage.count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+      {/* Search, View Modes & Filter Toolbar (Replacing the old chip row) + Thin Progress Bar */}
+      <div className="px-3.5 sm:px-4 py-2.5 bg-slate-50/80 border-b border-slate-200 space-y-2.5">
+        {toolbarSlot}
 
         {/* Thin Segmented Progress Bar */}
         <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden flex gap-0.5">

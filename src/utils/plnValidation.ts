@@ -287,11 +287,30 @@ export function formatPowerVA(va: number): string {
 }
 
 export function parseCoordinate(coord: string): { lat: number; lng: number } | null {
-  if (!coord) return null;
-  const parts = coord.split(',').map((p) => parseFloat(p.trim()));
-  if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-    return { lat: parts[0], lng: parts[1] };
+  if (!coord || typeof coord !== 'string') return null;
+  const trimmed = coord.trim();
+  if (!trimmed) return null;
+
+  // Support Google Maps URL patterns like ?q=-7.6079,110.2038 or @-7.6079,110.2038
+  const urlMatch = trimmed.match(/(?:[?&]q=|@|ll=)(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/i);
+  if (urlMatch) {
+    const lat = parseFloat(urlMatch[1]);
+    const lng = parseFloat(urlMatch[2]);
+    if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      return { lat, lng };
+    }
   }
+
+  // Support standard "lat, lng" or whitespace-separated "lat lng"
+  const pairMatch = trimmed.match(/(-?\d+(?:\.\d+)?)\s*(?:,|;|\s)\s*(-?\d+(?:\.\d+)?)/);
+  if (pairMatch) {
+    const lat = parseFloat(pairMatch[1]);
+    const lng = parseFloat(pairMatch[2]);
+    if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      return { lat, lng };
+    }
+  }
+
   return null;
 }
 

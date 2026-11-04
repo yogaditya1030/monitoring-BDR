@@ -63,11 +63,23 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
   const [petugasSurvei, setPetugasSurvei] = useState(item.petugasSurvei || '');
   const [nomorGardu, setNomorGardu] = useState(item.nomorGardu || '');
   const [nomorTiang, setNomorTiang] = useState(item.nomorTiang || '');
-  const [tagingLokasi, setTagingLokasi] = useState(item.tagingLokasi || '-7.5812, 110.2319');
+  const [tagingLokasi, setTagingLokasi] = useState(item.tagingLokasi || '-7.6079, 110.2038');
   const [rab, setRab] = useState(item.rab || 0);
   const [noPkVendor, setNoPkVendor] = useState(item.noPkVendor || '');
   const [keteranganPekerjaan, setKeteranganPekerjaan] = useState(item.keteranganPekerjaan || '');
   const [surveyRabDesign, setSurveyRabDesign] = useState<SurveyRabDesign | undefined>(item.surveyRabDesign);
+
+  React.useEffect(() => {
+    setPetugasSurvei(item.petugasSurvei || '');
+    setNomorGardu(item.nomorGardu || '');
+    setNomorTiang(item.nomorTiang || '');
+    setTagingLokasi(item.tagingLokasi || '-7.6079, 110.2038');
+    setRab(item.rab || 0);
+    setNoPkVendor(item.noPkVendor || '');
+    setKeteranganPekerjaan(item.keteranganPekerjaan || '');
+    setSurveyRabDesign(item.surveyRabDesign);
+    setNextStatus(item.status);
+  }, [item.id, item.tagingLokasi]);
 
   // Form State - K3L
   const [workingPermit, setWorkingPermit] = useState(item.workingPermit || `WP-K3L-${new Date().getFullYear()}-${item.id.slice(0, 4).toUpperCase()}`);
@@ -542,6 +554,7 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
               <TeknikSurveyRabStudio
                 item={item}
                 petugasSurvei={petugasSurvei}
+                onUpdatePetugasSurvei={(name) => setPetugasSurvei(name)}
                 tagingLokasi={tagingLokasi}
                 nomorGardu={nomorGardu}
                 nomorTiang={nomorTiang}

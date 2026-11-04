@@ -28,7 +28,7 @@ import {
   X,
 } from 'lucide-react';
 
-const STORAGE_KEY = 'PLN_PBPD_PFK_RECORDS_V4';
+const STORAGE_KEY = 'PLN_PBPD_PFK_RECORDS_V5';
 
 export default function App() {
   const [records, setRecords] = useState<PermohonanItem[]>(() => {
