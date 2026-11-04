@@ -22,10 +22,14 @@ import {
   isCableMarkedBongkar,
   isSpanMarkedBongkar,
   rectsOverlap,
+  normalizeRabPackageItems,
+  buildConnectedEtiketRoadNetwork,
 } from './rabCalculator';
 import {
   PRESET_SMPN3_PABELAN_NODES,
   PRESET_SMPN3_PABELAN_SPANS,
+  CONSTRUCTION_PACKAGES_CATALOG,
+  KHS_MASTER_CATALOG,
 } from '../data/khsAndConstructionCatalog';
 
 test('calculateGeodesicDistanceMeters calculates ~40m between adjacent Pabelan poles', () => {
@@ -620,4 +624,182 @@ test('isSpanMarkedBongkar and generateRabItemsFromSurvey handle dismantled cable
   assert.equal(bongkarCableJasa.volume, 1);
   assert.equal(bongkarCableJasa.gol, 'JASA');
 });
+
+test('all non-BONGKAR packages in CONSTRUCTION_PACKAGES_CATALOG (including P12, P12C-1, P12C-2, CM5-3) include Upah Pasang JASA and never include JASA_BONGKAR in PASANG mode', () => {
+  const nonBongkarPackages = CONSTRUCTION_PACKAGES_CATALOG.filter(
+    (pkg) => pkg.category !== 'BONGKAR'
+  );
+  assert.ok(nonBongkarPackages.length > 50);
+
+  for (const pkg of nonBongkarPackages) {
+    // 1. None of the PASANG components may be a JASA_BONGKAR item
+    for (const comp of pkg.components) {
+      const khs = KHS_MASTER_CATALOG[comp.khsId];
+      assert.ok(khs, `Missing KHS definition ${comp.khsId} in package ${pkg.code}`);
+      assert.equal(
+        comp.khsId.startsWith('JASA_BONGKAR_'),
+        false,
+        `Package ${pkg.code} (${pkg.category}) must not contain dismantling labor ${comp.khsId} (${khs.uraian}) in PASANG components`
+      );
+      assert.equal(
+        khs.uraian.toLowerCase().includes('upah bongkar'),
+        false,
+        `Package ${pkg.code} must not contain 'Upah Bongkar' item (${khs.uraian}) in PASANG components`
+      );
+    }
+
+    // 2. Every installation package must have at least one JASA (installation labor) component
+    const hasPasangJasa = pkg.components.some((comp) => {
+      const khs = KHS_MASTER_CATALOG[comp.khsId];
+      return khs && khs.gol === 'JASA';
+    });
+    assert.equal(
+      hasPasangJasa,
+      true,
+      `Package ${pkg.code} (${pkg.name}) must include an installation JASA component`
+    );
+  }
+
+  // Specifically verify P12, P12C-1, P12C-2 in generateRabItemsFromSurvey
+  const rabForP12 = generateRabItemsFromSurvey({
+    nodes: [
+      {
+        id: 'pole-p12',
+        kodeTiang: 'SA4-20/1',
+        kind: 'TIANG_RENCANA',
+        lat: -7.605,
+        lng: 110.205,
+        constructions: [
+          { code: 'P12C-1', qty: 1, actionType: 'PASANG' },
+          { code: 'P12C-2', qty: 2, actionType: 'PASANG' },
+        ],
+      },
+    ],
+    spans: [],
+    includePembetonanTiang: false,
+    transportasiRit: 0,
+  });
+
+  const p12c1Jasa = rabForP12.find(
+    (i) => i.parentPackageCode === 'P12C-1' && i.gol === 'JASA'
+  );
+  assert.ok(p12c1Jasa, 'P12C-1 must have a JASA row in RAB');
+  assert.ok(
+    p12c1Jasa.uraian.includes('Upah Pasang'),
+    `Expected Upah Pasang for P12C-1, got: ${p12c1Jasa.uraian}`
+  );
+  assert.equal(p12c1Jasa.volume, 1);
+
+  const p12c2Jasa = rabForP12.find(
+    (i) => i.parentPackageCode === 'P12C-2' && i.gol === 'JASA'
+  );
+  assert.ok(p12c2Jasa, 'P12C-2 must have a JASA row in RAB');
+  assert.ok(
+    p12c2Jasa.uraian.includes('Upah Pasang'),
+    `Expected Upah Pasang for P12C-2, got: ${p12c2Jasa.uraian}`
+  );
+  assert.equal(p12c2Jasa.volume, 2);
+});
+
+test('normalizeRabPackageItems repairs 0-volume detail rows under SJ6 and SJ5 headers and upgrades stale JASA_BONGKAR in P12C-1', () => {
+  const brokenItems = [
+    {
+      id: 'rab-pkg-header-X-SJ6',
+      section: 'X' as const,
+      uraian: 'SJ6',
+      gol: 'HDW' as const,
+      satuan: 'Unit',
+      volume: 1,
+      hargaSatuan: 0,
+      isPackageHeader: true,
+      parentPackageCode: 'SJ6',
+    },
+    {
+      id: 'rab-pkg-item-X-SJ6-1',
+      section: 'X' as const,
+      uraian: 'Fixed Dead End Assembly + Bracket (Tarik Akhir LVTC)',
+      gol: 'HDW' as const,
+      satuan: 'Set',
+      volume: 0,
+      hargaSatuan: 63600,
+      khsId: 'HDW_FIXED_DEAD_END_TR',
+      parentPackageCode: 'SJ6',
+    },
+    {
+      id: 'rab-pkg-header-X-SJ5',
+      section: 'X' as const,
+      uraian: 'SJ5',
+      gol: 'HDW' as const,
+      satuan: 'Unit',
+      volume: 3,
+      hargaSatuan: 0,
+      isPackageHeader: true,
+      parentPackageCode: 'SJ5',
+    },
+    {
+      id: 'rab-pkg-item-X-SJ5-1',
+      section: 'X' as const,
+      uraian: 'Suspension Assembly + Bracket (Small Angle LVTC)',
+      gol: 'HDW' as const,
+      satuan: 'Set',
+      volume: 0,
+      hargaSatuan: 44100,
+      khsId: 'HDW_SUSPENSION_ASSEMBLY_TR',
+      parentPackageCode: 'SJ5',
+    },
+    {
+      id: 'rab-pkg-item-X-SJ5-2',
+      section: 'X' as const,
+      uraian: 'Stainless Steel Strip 20 x 0.7 mm',
+      gol: 'HDW' as const,
+      satuan: 'Mtr',
+      volume: 0,
+      hargaSatuan: 9900,
+      khsId: 'HDW_STAINLESS_STEEL_STRIP',
+      parentPackageCode: 'SJ5',
+    },
+  ];
+
+  const repaired = normalizeRabPackageItems(brokenItems);
+  const sj6Detail = repaired.find((r) => r.id === 'rab-pkg-item-X-SJ6-1');
+  const sj5Detail1 = repaired.find((r) => r.id === 'rab-pkg-item-X-SJ5-1');
+  const sj5Detail2 = repaired.find((r) => r.id === 'rab-pkg-item-X-SJ5-2');
+
+  assert.equal(sj6Detail?.volume, 1);
+  assert.equal(sj5Detail1?.volume, 3);
+  assert.equal(sj5Detail2?.volume, 7.5);
+});
+
+test('buildConnectedEtiketRoadNetwork creates a continuous main road through an intersection and connects branching roads at the junction point', () => {
+  // Replicate SA4-20/1 -> SA4-20/2 (main road) and SA4-20/2 -> SA4-20/3 (branch turning ~90 degrees)
+  const roadNet = buildConnectedEtiketRoadNetwork({
+    projectedNodes: [
+      { id: 'n1', x: 640, y: 150 },
+      { id: 'n2', x: 420, y: 310 },
+      { id: 'n3', x: 280, y: 170 },
+    ],
+    spans: [
+      { fromNodeId: 'n1', toNodeId: 'n2' },
+      { fromNodeId: 'n2', toNodeId: 'n3' },
+    ],
+  });
+
+  // Main road must have at least 4 points (extended start, n1, n2, extended end continuing straight past n2)
+  assert.ok(roadNet.mainRoadPoints.length >= 4);
+  // Branch road must exist and start at the exact junction point on the main road (n2 + road offset)
+  assert.equal(roadNet.branchRoadPolylines.length, 1);
+  const branch = roadNet.branchRoadPolylines[0];
+  assert.ok(branch.length >= 3);
+  const junctionPt = roadNet.intersectionPoints[0];
+  assert.ok(junctionPt);
+  assert.equal(branch[0].x, junctionPt.x);
+  assert.equal(branch[0].y, junctionPt.y);
+
+  // Verify the junction point also exists in mainRoadPoints so the intersection is 100% connected (menyambung)
+  const onMainRoad = roadNet.mainRoadPoints.some(
+    (p) => Math.hypot(p.x - junctionPt.x, p.y - junctionPt.y) < 0.5
+  );
+  assert.equal(onMainRoad, true, 'Branch road start must lie directly on a main road vertex');
+});
+
 

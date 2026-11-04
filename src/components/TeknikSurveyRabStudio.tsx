@@ -174,12 +174,12 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   // Etiket & RAB Header Metadata
   const [judulGambar, setJudulGambar] = useState<string>(
     initialDesign?.judulGambar ||
-      item.uraianPermohonan ||
-      `${item.jenisPermohonan} - ${item.pemohon}`
+      item.keteranganPekerjaan ||
+      `${item.transaksi} - ${item.kontakPerson}`
   );
   const [lokasiPekerjaan, setLokasiPekerjaan] = useState<string>(
     initialDesign?.lokasiPekerjaan ||
-      item.lokasi ||
+      item.alamat ||
       'WILAYAH KERJA ULP BOROBUDUR'
   );
   const [pelaksanaPekerjaan, setPelaksanaPekerjaan] = useState<string>(
@@ -383,7 +383,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       if (!q) return true;
       return (
         pkg.code.toLowerCase().includes(q) ||
-        pkg.title.toLowerCase().includes(q) ||
+        pkg.name.toLowerCase().includes(q) ||
         pkg.description.toLowerCase().includes(q)
       );
     });
@@ -1218,8 +1218,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       },
       digambarOleh: petugasSurvei || 'TIM SURVEI TEKNIK',
       direncanakanOleh: petugasSurvei || 'TIM SURVEI TEKNIK',
-      diperiksaOleh: 'ARIS DWI SS',
-      disetujuiOleh: 'ARIF SETYAWAN',
+      diperiksaOleh: 'ARIS DWI SS (TL Teknik)',
+      disetujuiOleh: 'ARIF SETYAWAN (Manajer)',
       nodes,
       spans,
       rabItems: generated,
@@ -1782,14 +1782,14 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               <p className="text-[8.5px] font-bold text-slate-500 uppercase">
                 DIPERIKSA (TL TEKNIK)
               </p>
-              <p className="font-extrabold text-slate-900 mt-2">ARIS DWI SS</p>
+              <p className="font-extrabold text-slate-900 mt-2">ARIS DWI SS (TL Teknik)</p>
             </div>
             <div className="border border-slate-300 rounded p-1.5">
               <p className="text-[8.5px] font-bold text-slate-500 uppercase">
                 DISETUJUI (MANAJER ULP)
               </p>
               <p className="font-extrabold text-slate-900 mt-2">
-                ARIF SETYAWAN
+                ARIF SETYAWAN (Manajer)
               </p>
             </div>
             <div className="border border-slate-300 rounded p-1.5 flex flex-col justify-between">
@@ -2951,7 +2951,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                       >
                         {filteredCatalog.map((pkg) => (
                           <option key={pkg.code} value={pkg.code}>
-                            {pkg.code} — {pkg.title}
+                            {pkg.code} — {pkg.name}
                           </option>
                         ))}
                       </select>
@@ -3428,7 +3428,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                 </h4>
               </div>
               <div className="text-right text-xs font-bold text-slate-600">
-                No. Agenda: #{item.no} • {item.tanggalSurat}
+                No. Agenda: #{item.id.slice(-6)} • {item.tglSurat}
               </div>
             </div>
 
@@ -3437,14 +3437,14 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                 <p className="text-[10px] font-bold text-slate-500 uppercase">
                   Nama Pemohon
                 </p>
-                <p className="font-extrabold text-slate-900">{item.pemohon}</p>
+                <p className="font-extrabold text-slate-900">{item.kontakPerson}</p>
               </div>
               <div>
                 <p className="text-[10px] font-bold text-slate-500 uppercase">
                   No. Surat Permohonan
                 </p>
                 <p className="font-bold text-slate-900">
-                  {item.noSuratPermohonan}
+                  {item.suratPermohonan}
                 </p>
               </div>
               <div>
@@ -3452,21 +3452,21 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                   Jenis Permohonan
                 </p>
                 <p className="font-bold text-indigo-700">
-                  {item.jenisPermohonan}
+                  {item.transaksi} - {item.peruntukan}
                 </p>
               </div>
               <div>
                 <p className="text-[10px] font-bold text-slate-500 uppercase">
                   Lokasi Permohonan
                 </p>
-                <p className="font-bold text-slate-900">{item.lokasi}</p>
+                <p className="font-bold text-slate-900">{item.alamat}</p>
               </div>
               <div>
                 <p className="text-[10px] font-bold text-slate-500 uppercase">
                   Uraian Permohonan
                 </p>
                 <p className="font-bold text-slate-900">
-                  {item.uraianPermohonan}
+                  {item.keteranganPekerjaan}
                 </p>
               </div>
               <div>
@@ -3474,7 +3474,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                   File Lampiran Security
                 </p>
                 <p className="font-bold text-slate-800">
-                  {item.suratPermohonanFileName ||
+                  {item.suratPermohonan ||
                     'Teregistrasi di Posko Security'}
                 </p>
               </div>
@@ -3491,8 +3491,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             ) : (
               <div className="border border-dashed border-slate-300 rounded p-6 text-center text-xs text-slate-600 bg-slate-50">
                 Dokumen fisik surat permohonan nomor{' '}
-                <strong>{item.noSuratPermohonan}</strong> dari{' '}
-                <strong>{item.pemohon}</strong> telah diverifikasi oleh bagian
+                <strong>{item.suratPermohonan}</strong> dari{' '}
+                <strong>{item.kontakPerson}</strong> telah diverifikasi oleh bagian
                 Security dan diteruskan ke bagian Teknik untuk pelaksanaan
                 Survei &amp; penyusunan RAB.
               </div>

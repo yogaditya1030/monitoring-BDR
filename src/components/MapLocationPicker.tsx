@@ -270,22 +270,8 @@ export const MapLocationPicker: React.FC<MapLocationPickerProps> = ({
         </p>
       </div>
 
-      {/* Action / Presets Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-slate-500 font-semibold text-[11px]">Pilih Lokasi Cepat:</span>
-          {presets.map((p) => (
-            <button
-              key={p.label}
-              type="button"
-              onClick={() => setLocation(p.lat, p.lng)}
-              className="px-2 py-0.5 rounded bg-slate-100 hover:bg-sky-100 hover:text-sky-800 text-slate-700 text-[11px] font-medium border border-slate-200 transition cursor-pointer"
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-
+      {/* GPS Action Bar */}
+      <div className="flex items-center justify-end text-xs">
         <button
           type="button"
           onClick={handleGetCurrentLocation}

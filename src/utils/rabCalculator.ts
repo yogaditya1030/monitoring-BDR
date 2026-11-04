@@ -1182,6 +1182,117 @@ export function updateRabPackageHeaderVolume(
   });
 }
 
+/**
+ * Menormalisasi seluruh baris Paket Konstruksi pada Tabel RAB:
+ * - Memastikan setiap baris detail di bawah Header Paket (+ | SJ6 | Unit | Vol) memiliki parentPackageCode & unitQtyPerPackage
+ * - Memperbaiki volume detail yang bernilai 0 padahal volume Header Paket > 0
+ * - Mengganti item JASA_BONGKAR yang sempat tersimpan secara keliru di dalam paket pasang (seperti P12C-1, P12C-2, CM5-3) menjadi Upah Pasang
+ */
+export function normalizeRabPackageItems(items: RabLineItem[]): RabLineItem[] {
+  let activeHeader: RabLineItem | null = null;
+
+  return items.map((row) => {
+    if (row.isPackageHeader) {
+      activeHeader = row;
+      return row;
+    }
+
+    const effectivePkgCode = (
+      row.parentPackageCode ||
+      (activeHeader && activeHeader.section === row.section
+        ? activeHeader.parentPackageCode || activeHeader.uraian
+        : '') ||
+      ''
+    ).toUpperCase();
+
+    if (!effectivePkgCode) {
+      return row;
+    }
+
+    const pkgDef = CONSTRUCTION_PACKAGES_CATALOG.find(
+      (p) => p.code.toUpperCase() === effectivePkgCode
+    );
+    if (!pkgDef) {
+      return row;
+    }
+
+    const headerForPkg =
+      items.find(
+        (h) =>
+          h.isPackageHeader &&
+          h.section === row.section &&
+          (h.parentPackageCode || h.uraian || '').toUpperCase() === effectivePkgCode
+      ) || activeHeader;
+
+    const headerVol =
+      headerForPkg && Number(headerForPkg.volume) > 0
+        ? Number(headerForPkg.volume)
+        : 0;
+
+    // Cek apakah baris ini cocok dengan komponen paket konstruksi (atau item bongkar lama yang harus diganti ke Upah Pasang)
+    let matchedComp = pkgDef.components.find((comp) => {
+      if (row.khsId && comp.khsId === row.khsId) return true;
+      const khs = KHS_MASTER_CATALOG[comp.khsId];
+      return khs && khs.uraian === row.uraian;
+    });
+
+    let updatedUraian = row.uraian;
+    let updatedKhsId = row.khsId;
+    let updatedHarga = row.hargaSatuan;
+
+    if (
+      !matchedComp &&
+      pkgDef.category !== 'BONGKAR' &&
+      row.gol === 'JASA' &&
+      (row.uraian.toLowerCase().includes('bongkar') ||
+        (row.khsId && row.khsId.startsWith('JASA_BONGKAR_')))
+    ) {
+      const pasangComp = pkgDef.components.find((comp) => {
+        const khs = KHS_MASTER_CATALOG[comp.khsId];
+        return khs && khs.gol === 'JASA' && !comp.khsId.startsWith('JASA_BONGKAR_');
+      });
+      if (pasangComp) {
+        matchedComp = pasangComp;
+        const pasangKhs = KHS_MASTER_CATALOG[pasangComp.khsId];
+        if (pasangKhs) {
+          updatedUraian = pasangKhs.uraian;
+          updatedKhsId = pasangComp.khsId;
+          updatedHarga = pasangKhs.hargaSatuan;
+        }
+      }
+    }
+
+    // Jika baris ini memang bagian dari paket konstruksi
+    if (row.parentPackageCode || matchedComp) {
+      const baseUnitQty =
+        row.unitQtyPerPackage && row.unitQtyPerPackage > 0
+          ? row.unitQtyPerPackage
+          : matchedComp
+          ? matchedComp.qty
+          : row.volume > 0 && headerVol > 0
+          ? Math.round((row.volume / headerVol) * 10000) / 10000
+          : 1;
+
+      const repairedVol =
+        headerVol > 0 && (!row.volume || row.volume <= 0)
+          ? Math.round(baseUnitQty * headerVol * 100) / 100
+          : row.volume;
+
+      return {
+        ...row,
+        uraian: updatedUraian,
+        khsId: updatedKhsId,
+        hargaSatuan: updatedHarga,
+        parentPackageCode: pkgDef.code,
+        unitQtyPerPackage: baseUnitQty,
+        volume: repairedVol,
+      };
+    }
+
+    return row;
+  });
+}
+
 export interface RabRowCostBreakdown {
   mdu: number;
   hardware: number;
@@ -1906,4 +2017,452 @@ export function computeEtiketCalloutLayout(params: {
     allPlacedRects: obstacles,
   };
 }
+
+export interface ConnectedEtiketRoadNetwork {
+  mainRoadPoints: Array<{ x: number; y: number }>;
+  mainRoadPathD: string;
+  branchRoadPolylines: Array<Array<{ x: number; y: number }>>;
+  branchRoadPathsD: string[];
+  simpangPathD: string;
+  intersectionPoints: Array<{ x: number; y: number }>;
+  defaultMainRoadCenter: { x: number; y: number };
+  defaultSimpangRoadCenter: { x: number; y: number };
+}
+
+function extendRayToEtiketFrame(
+  origin: { x: number; y: number },
+  ux: number,
+  uy: number,
+  minExtendDist: number = 140
+): { x: number; y: number } {
+  const FRAME_MIN_X = 8;
+  const FRAME_MAX_X = 912;
+  const FRAME_MIN_Y = 8;
+  const FRAME_MAX_Y = 452;
+
+  const candidates: number[] = [];
+  if (Math.abs(ux) > 1e-4) {
+    const tLeft = (FRAME_MIN_X - origin.x) / ux;
+    const tRight = (FRAME_MAX_X - origin.x) / ux;
+    if (tLeft > 0) candidates.push(tLeft);
+    if (tRight > 0) candidates.push(tRight);
+  }
+  if (Math.abs(uy) > 1e-4) {
+    const tTop = (FRAME_MIN_Y - origin.y) / uy;
+    const tBottom = (FRAME_MAX_Y - origin.y) / uy;
+    if (tTop > 0) candidates.push(tTop);
+    if (tBottom > 0) candidates.push(tBottom);
+  }
+
+  const boundaryDist =
+    candidates.length > 0 ? Math.min(...candidates) : minExtendDist;
+  const finalDist = Math.max(minExtendDist, Math.min(boundaryDist, 950));
+
+  return {
+    x: Math.max(
+      FRAME_MIN_X,
+      Math.min(FRAME_MAX_X, Math.round((origin.x + ux * finalDist) * 10) / 10)
+    ),
+    y: Math.max(
+      FRAME_MIN_Y,
+      Math.min(FRAME_MAX_Y, Math.round((origin.y + uy * finalDist) * 10) / 10)
+    ),
+  };
+}
+
+/**
+ * Membangun jaringan jalan utama & persimpangan jalan (Simpang Jalan) pada Etiket Gambar PLN
+ * agar selalu MENYAMBUNG secara utuh (T-junction / 4-way crossroad) tanpa terputus seperti jalan buntu:
+ * - Bila jaringan tiang/kabel berbelok di persimpangan (misal SA4-20/1 -> SA4-20/2 -> SA4-20/3),
+ *   koridor Jalan Utama diteruskan lurus menembus simpang hingga tepi bidang gambar,
+ *   dan cabang Simpang Jalan menyambung tepat dari titik simpang (junctionPt) menuju arah cabang hingga tepi bidang gambar.
+ */
+export function buildConnectedEtiketRoadNetwork(params: {
+  projectedNodes: Array<{ id: string; x: number; y: number }>;
+  spans?: Array<{ fromNodeId: string; toNodeId: string }>;
+}): ConnectedEtiketRoadNetwork {
+  const { projectedNodes, spans = [] } = params;
+  const ROAD_OFFSET_X = 16;
+  const ROAD_OFFSET_Y = 12;
+
+  const pointsToPathD = (pts: Array<{ x: number; y: number }>): string =>
+    pts
+      .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+      .join(' ');
+
+  if (projectedNodes.length === 0) {
+    const mainRoadPoints = [
+      { x: 8, y: 268 },
+      { x: 460, y: 245 },
+      { x: 912, y: 222 },
+    ];
+    const pivot = { x: 460, y: 245 };
+    const simpangEnd = extendRayToEtiketFrame(pivot, 0.45, 0.89, 210);
+    const branchPoly = [pivot, simpangEnd];
+    return {
+      mainRoadPoints,
+      mainRoadPathD: pointsToPathD(mainRoadPoints),
+      branchRoadPolylines: [branchPoly],
+      branchRoadPathsD: [pointsToPathD(branchPoly)],
+      simpangPathD: pointsToPathD(branchPoly),
+      intersectionPoints: [pivot],
+      defaultMainRoadCenter: { x: 250, y: 282 },
+      defaultSimpangRoadCenter: {
+        x: (pivot.x + simpangEnd.x) / 2,
+        y: (pivot.y + simpangEnd.y) / 2,
+      },
+    };
+  }
+
+  if (projectedNodes.length === 1) {
+    const p = {
+      x: projectedNodes[0].x + ROAD_OFFSET_X,
+      y: projectedNodes[0].y + ROAD_OFFSET_Y,
+    };
+    const mainRoadPoints = [
+      { x: 8, y: p.y },
+      p,
+      { x: 912, y: p.y },
+    ];
+    const simpangEnd = extendRayToEtiketFrame(p, 0.35, 0.94, 210);
+    const branchPoly = [p, simpangEnd];
+    return {
+      mainRoadPoints,
+      mainRoadPathD: pointsToPathD(mainRoadPoints),
+      branchRoadPolylines: [branchPoly],
+      branchRoadPathsD: [pointsToPathD(branchPoly)],
+      simpangPathD: pointsToPathD(branchPoly),
+      intersectionPoints: [p],
+      defaultMainRoadCenter: { x: Math.max(130, p.x - 160), y: Math.min(434, p.y + 24) },
+      defaultSimpangRoadCenter: {
+        x: (p.x + simpangEnd.x) / 2,
+        y: (p.y + simpangEnd.y) / 2,
+      },
+    };
+  }
+
+  // Offset titik tiang menjadi titik as jalan (agar tiang berada di tepi/bahu jalan)
+  const nodeRoadMap = new Map<string, { id: string; x: number; y: number }>();
+  const orderedRoadPts = projectedNodes.map((n) => {
+    const rp = {
+      id: n.id,
+      x: n.x + ROAD_OFFSET_X,
+      y: n.y + ROAD_OFFSET_Y,
+    };
+    nodeRoadMap.set(n.id, rp);
+    return rp;
+  });
+
+  // Bangun daftar segmen gawang jalan
+  const rawEdges: Array<{
+    from: { id: string; x: number; y: number };
+    to: { id: string; x: number; y: number };
+    length: number;
+    ux: number;
+    uy: number;
+  }> = [];
+
+  if (spans.length > 0) {
+    spans.forEach((sp) => {
+      const a = nodeRoadMap.get(sp.fromNodeId);
+      const b = nodeRoadMap.get(sp.toNodeId);
+      if (!a || !b || a.id === b.id) return;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) return;
+      rawEdges.push({
+        from: a,
+        to: b,
+        length: len,
+        ux: dx / len,
+        uy: dy / len,
+      });
+    });
+  }
+
+  if (rawEdges.length === 0) {
+    for (let i = 0; i < orderedRoadPts.length - 1; i++) {
+      const a = orderedRoadPts[i];
+      const b = orderedRoadPts[i + 1];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.max(1, Math.hypot(dx, dy));
+      rawEdges.push({
+        from: a,
+        to: b,
+        length: len,
+        ux: dx / len,
+        uy: dy / len,
+      });
+    }
+  }
+
+  // Cari koridor Jalan Utama (rantai segmen searah terpanjang dengan sudut belok <= 28 derajat)
+  const COS_28_DEG = Math.cos((28 * Math.PI) / 180);
+
+  // Gunakan segmen terpanjang sebagai jangkar koridor Jalan Utama
+  let primaryEdgeIdx = 0;
+  let maxEdgeLen = -1;
+  rawEdges.forEach((edge, idx) => {
+    if (edge.length > maxEdgeLen) {
+      maxEdgeLen = edge.length;
+      primaryEdgeIdx = idx;
+    }
+  });
+
+  const primaryEdge = rawEdges[primaryEdgeIdx];
+  const mainNodeIds = new Set<string>([primaryEdge.from.id, primaryEdge.to.id]);
+  const mainChainPts: Array<{ id: string; x: number; y: number }> = [
+    primaryEdge.from,
+    primaryEdge.to,
+  ];
+  const usedEdgeIndices = new Set<number>([primaryEdgeIdx]);
+
+  // Perluas rantai Jalan Utama ke arah depan & belakang selama segmen masih searah (sudut <= 28 derajat)
+  let grew = true;
+  while (grew) {
+    grew = false;
+    const firstPt = mainChainPts[0];
+    const secondPt = mainChainPts[1];
+    const headDirX = secondPt.x - firstPt.x;
+    const headDirY = secondPt.y - firstPt.y;
+    const headLen = Math.max(1, Math.hypot(headDirX, headDirY));
+    const hUx = headDirX / headLen;
+    const hUy = headDirY / headLen;
+
+    const lastPt = mainChainPts[mainChainPts.length - 1];
+    const prevLastPt = mainChainPts[mainChainPts.length - 2];
+    const tailDirX = lastPt.x - prevLastPt.x;
+    const tailDirY = lastPt.y - prevLastPt.y;
+    const tailLen = Math.max(1, Math.hypot(tailDirX, tailDirY));
+    const tUx = tailDirX / tailLen;
+    const tUy = tailDirY / tailLen;
+
+    for (let i = 0; i < rawEdges.length; i++) {
+      if (usedEdgeIndices.has(i)) continue;
+      const e = rawEdges[i];
+
+      // Cek sambungan di ujung akhir (lastPt)
+      if (e.from.id === lastPt.id && !mainNodeIds.has(e.to.id)) {
+        const dot = e.ux * tUx + e.uy * tUy;
+        if (dot >= COS_28_DEG) {
+          mainChainPts.push(e.to);
+          mainNodeIds.add(e.to.id);
+          usedEdgeIndices.add(i);
+          grew = true;
+          break;
+        }
+      } else if (e.to.id === lastPt.id && !mainNodeIds.has(e.from.id)) {
+        const dot = -e.ux * tUx + -e.uy * tUy;
+        if (dot >= COS_28_DEG) {
+          mainChainPts.push(e.from);
+          mainNodeIds.add(e.from.id);
+          usedEdgeIndices.add(i);
+          grew = true;
+          break;
+        }
+      }
+
+      // Cek sambungan di ujung awal (firstPt)
+      if (e.to.id === firstPt.id && !mainNodeIds.has(e.from.id)) {
+        const dot = e.ux * hUx + e.uy * hUy;
+        if (dot >= COS_28_DEG) {
+          mainChainPts.unshift(e.from);
+          mainNodeIds.add(e.from.id);
+          usedEdgeIndices.add(i);
+          grew = true;
+          break;
+        }
+      } else if (e.from.id === firstPt.id && !mainNodeIds.has(e.to.id)) {
+        const dot = -e.ux * hUx + -e.uy * hUy;
+        if (dot >= COS_28_DEG) {
+          mainChainPts.unshift(e.to);
+          mainNodeIds.add(e.to.id);
+          usedEdgeIndices.add(i);
+          grew = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // Perpanjang ujung awal dan ujung akhir Jalan Utama hingga tepi bidang gambar agar jalan utama menerus (tidak buntu)
+  const firstMain = mainChainPts[0];
+  const secondMain = mainChainPts[1];
+  const startDx = firstMain.x - secondMain.x;
+  const startDy = firstMain.y - secondMain.y;
+  const startLen = Math.max(1, Math.hypot(startDx, startDy));
+  const startExt = extendRayToEtiketFrame(
+    firstMain,
+    startDx / startLen,
+    startDy / startLen,
+    180
+  );
+
+  const lastMain = mainChainPts[mainChainPts.length - 1];
+  const prevLastMain = mainChainPts[mainChainPts.length - 2];
+  const endDx = lastMain.x - prevLastMain.x;
+  const endDy = lastMain.y - prevLastMain.y;
+  const endLen = Math.max(1, Math.hypot(endDx, endDy));
+  const endExt = extendRayToEtiketFrame(
+    lastMain,
+    endDx / endLen,
+    endDy / endLen,
+    180
+  );
+
+  const mainRoadPoints: Array<{ x: number; y: number }> = [
+    startExt,
+    ...mainChainPts.map((p) => ({ x: p.x, y: p.y })),
+    endExt,
+  ];
+
+  // Kumpulkan seluruh segmen cabang / belokan simpang jalan yang belum masuk ke Jalan Utama
+  const branchRoadPolylines: Array<Array<{ x: number; y: number }>> = [];
+  const intersectionPoints: Array<{ x: number; y: number }> = [];
+
+  const remainingEdges = rawEdges.filter((_, idx) => !usedEdgeIndices.has(idx));
+
+  if (remainingEdges.length > 0) {
+    // Susun rantai cabang yang berawal dari titik simpang (junction node) dan menerus hingga tepi gambar
+    const visitedBranchEdges = new Set<number>();
+
+    for (let i = 0; i < remainingEdges.length; i++) {
+      if (visitedBranchEdges.has(i)) continue;
+      const e = remainingEdges[i];
+
+      let startPt = e.from;
+      let nextPt = e.to;
+      if (mainNodeIds.has(e.to.id) && !mainNodeIds.has(e.from.id)) {
+        startPt = e.to;
+        nextPt = e.from;
+      }
+
+      const chain: Array<{ id: string; x: number; y: number }> = [startPt, nextPt];
+      visitedBranchEdges.add(i);
+      intersectionPoints.push({ x: startPt.x, y: startPt.y });
+
+      // Lanjutkan rantai cabang bila ada segmen berikutnya yang searah
+      let branchGrew = true;
+      while (branchGrew) {
+        branchGrew = false;
+        const tail = chain[chain.length - 1];
+        const prev = chain[chain.length - 2];
+        const bDx = tail.x - prev.x;
+        const bDy = tail.y - prev.y;
+        const bLen = Math.max(1, Math.hypot(bDx, bDy));
+        const bUx = bDx / bLen;
+        const bUy = bDy / bLen;
+
+        for (let j = 0; j < remainingEdges.length; j++) {
+          if (visitedBranchEdges.has(j)) continue;
+          const cand = remainingEdges[j];
+          if (cand.from.id === tail.id) {
+            const dot = cand.ux * bUx + cand.uy * bUy;
+            if (dot >= COS_28_DEG) {
+              chain.push(cand.to);
+              visitedBranchEdges.add(j);
+              branchGrew = true;
+              break;
+            }
+          } else if (cand.to.id === tail.id) {
+            const dot = -cand.ux * bUx + -cand.uy * bUy;
+            if (dot >= COS_28_DEG) {
+              chain.push(cand.from);
+              visitedBranchEdges.add(j);
+              branchGrew = true;
+              break;
+            }
+          }
+        }
+      }
+
+      // Perpanjang ujung cabang menuju tepi bidang gambar agar persimpangan jalan tampak menyambung utuh (tidak buntu)
+      const bLast = chain[chain.length - 1];
+      const bPrev = chain[chain.length - 2];
+      const bEndDx = bLast.x - bPrev.x;
+      const bEndDy = bLast.y - bPrev.y;
+      const bEndLen = Math.max(1, Math.hypot(bEndDx, bEndDy));
+      const branchExtEnd = extendRayToEtiketFrame(
+        bLast,
+        bEndDx / bEndLen,
+        bEndDy / bEndLen,
+        165
+      );
+
+      branchRoadPolylines.push([
+        ...chain.map((p) => ({ x: p.x, y: p.y })),
+        branchExtEnd,
+      ]);
+    }
+  } else {
+    // Jika seluruh tiang berada pada 1 garis lurus, tambahkan 1 Simpang Jalan yang menyambung tegak lurus dari titik tengah jalan utama hingga tepi gambar
+    const midIdx = Math.floor(mainChainPts.length / 2);
+    const pivot = mainChainPts[midIdx] || mainRoadPoints[1];
+    const mainDx = endExt.x - startExt.x;
+    const mainDy = endExt.y - startExt.y;
+    const mainLen = Math.max(1, Math.hypot(mainDx, mainDy));
+    // Vektor tegak lurus mengarah ke kanan-bawah bidang gambar
+    let perpX = -mainDy / mainLen;
+    let perpY = mainDx / mainLen;
+    if (perpY < 0) {
+      perpX = -perpX;
+      perpY = -perpY;
+    }
+    const simpangEnd = extendRayToEtiketFrame(
+      { x: pivot.x, y: pivot.y },
+      perpX,
+      perpY,
+      190
+    );
+    intersectionPoints.push({ x: pivot.x, y: pivot.y });
+    branchRoadPolylines.push([
+      { x: pivot.x, y: pivot.y },
+      simpangEnd,
+    ]);
+  }
+
+  const branchRoadPathsD = branchRoadPolylines.map(pointsToPathD);
+  const firstBranch = branchRoadPolylines[0] || [
+    { x: 460, y: 245 },
+    { x: 640, y: 380 },
+  ];
+  const firstBranchStart = firstBranch[0];
+  const firstBranchEnd = firstBranch[firstBranch.length - 1];
+
+  const defaultMainRoadCenter = {
+    x: Math.max(
+      120,
+      Math.min(780, (mainChainPts[0].x + mainChainPts[mainChainPts.length - 1].x) / 2)
+    ),
+    y: Math.min(
+      434,
+      (mainChainPts[0].y + mainChainPts[mainChainPts.length - 1].y) / 2 + 24
+    ),
+  };
+
+  const defaultSimpangRoadCenter = {
+    x: Math.max(
+      90,
+      Math.min(820, (firstBranchStart.x + firstBranchEnd.x) / 2)
+    ),
+    y: Math.max(
+      30,
+      Math.min(434, (firstBranchStart.y + firstBranchEnd.y) / 2)
+    ),
+  };
+
+  return {
+    mainRoadPoints,
+    mainRoadPathD: pointsToPathD(mainRoadPoints),
+    branchRoadPolylines,
+    branchRoadPathsD,
+    simpangPathD: branchRoadPathsD[0] || '',
+    intersectionPoints,
+    defaultMainRoadCenter,
+    defaultSimpangRoadCenter,
+  };
+}
+
 

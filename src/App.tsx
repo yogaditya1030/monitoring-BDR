@@ -16,6 +16,7 @@ import {
 import {
   buildTeknikWaNotification,
   TeknikWaNotificationPayload,
+  TEKNIK_WA_CONTACTS,
 } from './utils/plnValidation';
 import {
   CheckCircle2,
@@ -28,7 +29,7 @@ import {
   X,
 } from 'lucide-react';
 
-const STORAGE_KEY = 'PLN_PBPD_PFK_RECORDS_V5';
+const STORAGE_KEY = 'PLN_PBPD_PFK_RECORDS_V6';
 
 export default function App() {
   const [records, setRecords] = useState<PermohonanItem[]>(() => {
@@ -132,39 +133,31 @@ export default function App() {
     };
   }, []);
 
-  // Handle new record creation from Quick Intake
+  // Handle new record creation from Quick Intake (otomatis kirim ke 3 personil Tim Teknik & otomatis sinkron)
   const handleAddNewRecord = async (
     newRecord: PermohonanItem,
-    shouldSyncToSheet: boolean,
-    waOptions?: { sendToTeknik: boolean; teknikPhone: string }
+    shouldSyncToSheet: boolean = true,
+    _waOptions?: { sendToTeknik: boolean; teknikPhone: string }
   ) => {
     setRecords((prev) => [newRecord, ...prev]);
+
+    const allTeknikSummary = TEKNIK_WA_CONTACTS.map(
+      (c) => `${c.name} (${c.phone})`
+    ).join(', ');
 
     const isPfk = newRecord.transaksi === 'PFK';
     showToast(
       isPfk
-        ? `⚡ Permohonan PFK "${newRecord.projectName}" berhasil dibuat & notifikasi WA disiapkan untuk Tim Teknik!`
-        : `Permohonan ${newRecord.transaksi} "${newRecord.projectName}" berhasil didaftarkan & notifikasi WA Tim Teknik siap dikirim.`,
+        ? `⚡ Permohonan PFK "${newRecord.projectName}" disimpan, otomatis dikirim ke 3 personil Tim Teknik (${allTeknikSummary}) & otomatis tersinkron!`
+        : `Permohonan ${newRecord.transaksi} "${newRecord.projectName}" disimpan, otomatis dikirim ke 3 personil Tim Teknik (${allTeknikSummary}) & otomatis tersinkron!`,
       isPfk ? 'info' : 'success'
     );
 
-    if (waOptions?.sendToTeknik !== false) {
-      const payload = buildTeknikWaNotification(
-        newRecord,
-        waOptions?.teknikPhone || '08112500123'
-      );
-      setWaCopied(false);
-      setActiveWaNotification({
-        record: newRecord,
-        payload,
-      });
-    }
-
-    // Auto-sync row to Google Sheets if connected and requested
-    if (shouldSyncToSheet && sheetsState.isConnected && sheetsState.spreadsheetId) {
+    // Auto-sync row to Google Sheets whenever connected
+    if (shouldSyncToSheet !== false && sheetsState.isConnected && sheetsState.spreadsheetId) {
       try {
         await appendRowToGoogleSheet(sheetsState.spreadsheetId, newRecord);
-        showToast('Data berhasil ditambahkan ke Google Spreadsheet secara realtime!', 'success');
+        showToast('Data berhasil disinkronkan secara otomatis ke Google Spreadsheet!', 'success');
       } catch (err) {
         console.error('Failed to append row to Google Sheet', err);
       }
@@ -279,7 +272,7 @@ export default function App() {
             © {new Date().getFullYear()} PT PLN (Persero) ULP Borobudur, UP3 Magelang, UID Jawa Tengah • Sistem Monitoring PBPD & PFK
           </span>
           <span className="flex items-center gap-2 text-[11px] text-slate-400">
-            Terintegrasi dengan Google Sheets API • AI Report Generator • K3L • Teknik • TE • PP
+            Aditya Yoga P.N
           </span>
         </div>
       </footer>
@@ -380,8 +373,56 @@ export default function App() {
                     {activeWaNotification.payload.customerPhone}
                   </div>
                   <div className="text-[10px] text-emerald-700">
-                    Tujuan WA Teknik: {activeWaNotification.payload.recipientPhone}
+                    Tujuan WA Teknik: {activeWaNotification.payload.recipientName} ({activeWaNotification.payload.recipientPhone})
                   </div>
+                </div>
+              </div>
+
+              {/* Daftar Kontak Tim Teknik */}
+              <div className="p-2.5 rounded-lg bg-emerald-50/70 border border-emerald-200 space-y-1.5">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-900">
+                  Pilih / Kirim Langsung ke Kontak Tim Teknik:
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                  {activeWaNotification.payload.contactLinks.map((contact) => {
+                    const isSelected =
+                      activeWaNotification.payload.normalizedPhone === contact.normalizedPhone;
+                    return (
+                      <a
+                        key={contact.phone}
+                        href={contact.waUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => {
+                          setActiveWaNotification((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  payload: buildTeknikWaNotification(prev.record, contact.phone),
+                                }
+                              : null
+                          );
+                        }}
+                        className={`p-2 rounded-lg border text-left transition flex flex-col justify-between ${
+                          isSelected
+                            ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs'
+                            : 'bg-white text-slate-800 border-emerald-200 hover:bg-emerald-100/70'
+                        }`}
+                      >
+                        <div className="text-[11px] font-bold flex items-center justify-between gap-1">
+                          <span className="truncate">{contact.name}</span>
+                          <Send className="w-3 h-3 shrink-0" />
+                        </div>
+                        <div
+                          className={`text-[10px] font-mono mt-0.5 ${
+                            isSelected ? 'text-emerald-100' : 'text-slate-500'
+                          }`}
+                        >
+                          {contact.phone}
+                        </div>
+                      </a>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -445,7 +486,9 @@ export default function App() {
                   className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm flex items-center gap-1.5 transition"
                 >
                   <Send className="w-3.5 h-3.5" />
-                  <span>Kirim via WhatsApp ke Tim Teknik</span>
+                  <span>
+                    Kirim via WhatsApp ke {activeWaNotification.payload.recipientName}
+                  </span>
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
               </div>

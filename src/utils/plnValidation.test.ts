@@ -15,6 +15,7 @@ import {
   buildTeknikWaNotification,
   normalizePhoneToWa,
   parseCoordinate,
+  TEKNIK_WA_CONTACTS,
 } from './plnValidation.ts';
 import { PermohonanItem } from '../types';
 
@@ -372,6 +373,14 @@ test('buildTeknikWaNotification includes customer info, phone number, coordinate
   assert.match(payload.message, /-7\.6062, 110\.2195/);
   assert.match(payload.message, /https:\/\/www\.google\.com\/maps\?q=-7\.6062,110\.2195/);
   assert.ok(payload.waUrl.startsWith('https://wa.me/628112500123?text='));
+  assert.equal(TEKNIK_WA_CONTACTS.length, 3);
+  assert.equal(TEKNIK_WA_CONTACTS[0].label, 'Barep Ariyanto (+62852450477831)');
+  assert.equal(TEKNIK_WA_CONTACTS[1].label, 'Bagus (+6285878315131)');
+  assert.equal(TEKNIK_WA_CONTACTS[2].label, 'Ari K (+628562670122)');
+  assert.equal(payload.contactLinks.length, 3);
+  assert.ok(payload.contactLinks[0].waUrl.startsWith('https://wa.me/62852450477831?text='));
+  assert.ok(payload.contactLinks[1].waUrl.startsWith('https://wa.me/6285878315131?text='));
+  assert.ok(payload.contactLinks[2].waUrl.startsWith('https://wa.me/628562670122?text='));
 });
 
 test('INITIAL_PLN_RECORDS has empty petugasSurvei, nomorGardu, and nomorTiang by default', async () => {

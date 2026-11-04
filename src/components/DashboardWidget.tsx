@@ -255,12 +255,14 @@ export const DashboardWidget: React.FC<DashboardWidgetProps> = ({
 
       {/* Expandable Detailed Stage Cards Grid (On-Demand) */}
       {isExpanded && (
-        <div className="p-4 space-y-3 bg-white">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2.5">
-            {visibleStages.map((stage: PipelineStageSummary) => {
+        <div className="p-2 sm:p-3 lg:p-4 space-y-2 bg-white">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-1.5 sm:gap-2 lg:gap-2.5">
+            {visibleStages.map((stage: PipelineStageSummary, idx: number) => {
               const style = STAGE_STYLES[stage.status];
               const isSelected = selectedStatus === stage.status;
               const kvaTotal = stage.totalDayaVa / 1000;
+              const isLastOddMobile =
+                visibleStages.length % 2 === 1 && idx === visibleStages.length - 1;
 
               return (
                 <button
@@ -268,35 +270,43 @@ export const DashboardWidget: React.FC<DashboardWidgetProps> = ({
                   type="button"
                   onClick={() => handleStageClick(stage.status)}
                   aria-pressed={isSelected}
-                  className={`text-left p-3 rounded-xl border transition flex flex-col justify-between cursor-pointer relative ${
+                  className={`text-left px-2.5 py-1.5 sm:p-2.5 lg:p-3 rounded-lg sm:rounded-xl border transition flex flex-col justify-between cursor-pointer relative ${
+                    isLastOddMobile ? 'col-span-2 sm:col-span-1' : ''
+                  } ${
                     isSelected
                       ? `${style.activeBg} ${style.activeBorder} shadow-sm`
                       : `${style.bg} ${style.border}`
                   }`}
                 >
-                  {/* Top Row: Stage Icon, Title & Bottleneck Tag */}
+                  {/* Top Row: Stage Icon, Title & Count/Percentage */}
                   <div>
-                    <div className="flex items-start justify-between gap-1">
-                      <span className="text-[11px] font-extrabold text-slate-900 leading-tight flex items-center gap-1">
-                        <span>{style.icon}</span>
-                        <span>{stage.shortLabel}</span>
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[10px] sm:text-[11px] font-extrabold text-slate-900 leading-tight flex items-center gap-1 min-w-0">
+                        <span className="shrink-0">{style.icon}</span>
+                        <span className="truncate">{stage.shortLabel}</span>
                       </span>
-                      {stage.isBottleneck && (
+                      {stage.isBottleneck ? (
                         <span
                           title="Tahap dengan antrean aktif terbanyak"
-                          className="px-1.5 py-0.2 rounded bg-rose-600 text-white text-[9px] font-extrabold uppercase tracking-wider shrink-0"
+                          className="px-1 py-0.2 rounded bg-rose-600 text-white text-[8px] lg:text-[9px] font-extrabold uppercase tracking-wider shrink-0"
                         >
                           Bottleneck
+                        </span>
+                      ) : (
+                        <span
+                          className={`lg:hidden text-[9px] font-bold px-1 py-0.2 rounded shrink-0 ${style.badgeBg} ${style.badgeText}`}
+                        >
+                          {stage.percentage}%
                         </span>
                       )}
                     </div>
 
-                    <div className="text-[10px] text-slate-500 mt-0.5 truncate">
+                    <div className="hidden lg:block text-[10px] text-slate-500 mt-0.5 truncate">
                       PJ: {stage.department}
                     </div>
 
-                    {/* Count & Share */}
-                    <div className="flex items-baseline justify-between mt-2">
+                    {/* Desktop Count & Share */}
+                    <div className="hidden lg:flex items-baseline justify-between mt-2">
                       <div className="text-2xl font-black text-slate-950 leading-none">
                         {stage.count}
                       </div>
@@ -306,10 +316,42 @@ export const DashboardWidget: React.FC<DashboardWidgetProps> = ({
                         {stage.percentage}%
                       </span>
                     </div>
+
+                    {/* Mobile & Tablet Compact Count + Breakdown Row */}
+                    <div className="flex lg:hidden items-baseline justify-between gap-1 mt-1">
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-base sm:text-lg font-black text-slate-950 leading-none">
+                          {stage.count}
+                        </span>
+                        <span className="text-[9px] text-slate-600 font-medium">
+                          PB:{stage.pbCount} · PD:{stage.pdCount}
+                          {stage.pfkCount > 0 ? ` · ⚡${stage.pfkCount}` : ''}
+                        </span>
+                      </div>
+                      <span className="text-[9px] font-bold text-slate-800 shrink-0">
+                        {kvaTotal.toLocaleString('id-ID')} kVA
+                      </span>
+                    </div>
+
+                    {/* Mobile & Tablet Compact RAB / Status Pill */}
+                    <div className="lg:hidden mt-1 pt-1 border-t border-slate-200/70 flex items-center justify-between text-[9px]">
+                      {stage.status === 'SURVEI' && stage.awaitingRabCount > 0 ? (
+                        <span className="w-full font-bold text-amber-900 bg-amber-100/90 border border-amber-300 rounded px-1.5 py-0.2 text-center">
+                          {stage.awaitingRabCount} Belum Buat RAB
+                        </span>
+                      ) : (
+                        <>
+                          <span className="text-slate-500">RAB:</span>
+                          <span className="font-mono font-semibold text-slate-800 truncate">
+                            {stage.totalRab > 0 ? formatRupiah(stage.totalRab) : '-'}
+                          </span>
+                        </>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Middle Breakdown: PB / PD / PFK */}
-                  <div className="mt-2.5 pt-2 border-t border-slate-200/80 space-y-1 text-[10px]">
+                  {/* Desktop Breakdown: PB / PD / PFK */}
+                  <div className="hidden lg:block mt-2.5 pt-2 border-t border-slate-200/80 space-y-1 text-[10px]">
                     <div className="flex items-center justify-between text-slate-600">
                       <span>PB: <strong>{stage.pbCount}</strong></span>
                       <span>PD: <strong>{stage.pdCount}</strong></span>

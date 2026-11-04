@@ -701,7 +701,32 @@ export function buildPlnAiDataContext(records: PermohonanItem[]): string {
   ].join('\n');
 }
 
+export interface TeknikWaContact {
+  name: string;
+  phone: string;
+  label: string;
+}
+
+export const TEKNIK_WA_CONTACTS: TeknikWaContact[] = [
+  {
+    name: 'Barep Ariyanto',
+    phone: '+62852450477831',
+    label: 'Barep Ariyanto (+62852450477831)',
+  },
+  {
+    name: 'Bagus',
+    phone: '+6285878315131',
+    label: 'Bagus (+6285878315131)',
+  },
+  {
+    name: 'Ari K',
+    phone: '+628562670122',
+    label: 'Ari K (+628562670122)',
+  },
+];
+
 export interface TeknikWaNotificationPayload {
+  recipientName: string;
   recipientPhone: string;
   normalizedPhone: string;
   customerName: string;
@@ -710,6 +735,13 @@ export interface TeknikWaNotificationPayload {
   coordinates: string;
   message: string;
   waUrl: string;
+  contactLinks: {
+    name: string;
+    phone: string;
+    label: string;
+    normalizedPhone: string;
+    waUrl: string;
+  }[];
 }
 
 /**
@@ -754,9 +786,14 @@ export function buildTeknikWaNotification(
     | 'tglSurat'
     | 'keteranganPekerjaan'
   >,
-  teknikPhone: string = '08112500123'
+  teknikPhone: string = TEKNIK_WA_CONTACTS[0].phone
 ): TeknikWaNotificationPayload {
   const normalizedPhone = normalizePhoneToWa(teknikPhone);
+  const matchedContact = TEKNIK_WA_CONTACTS.find(
+    (c) => normalizePhoneToWa(c.phone) === normalizedPhone
+  );
+  const recipientName = matchedContact ? matchedContact.name : 'Tim Teknik';
+
   const cleanCoords = (item.tagingLokasi || '-7.6079, 110.2038').trim();
   const mapsUrl =
     item.linkMap && item.linkMap.trim()
@@ -804,11 +841,22 @@ export function buildTeknikWaNotification(
   ];
 
   const message = lines.join('\n');
+  const encodedMessage = encodeURIComponent(message);
   const waUrl = normalizedPhone
-    ? `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(message)}`
-    : `https://wa.me/?text=${encodeURIComponent(message)}`;
+    ? `https://wa.me/${normalizedPhone}?text=${encodedMessage}`
+    : `https://wa.me/?text=${encodedMessage}`;
+
+  const contactLinks = TEKNIK_WA_CONTACTS.map((c) => {
+    const norm = normalizePhoneToWa(c.phone);
+    return {
+      ...c,
+      normalizedPhone: norm,
+      waUrl: `https://wa.me/${norm}?text=${encodedMessage}`,
+    };
+  });
 
   return {
+    recipientName,
     recipientPhone: teknikPhone,
     normalizedPhone,
     customerName,
@@ -817,5 +865,7 @@ export function buildTeknikWaNotification(
     coordinates: cleanCoords,
     message,
     waUrl,
+    contactLinks,
   };
 }
+

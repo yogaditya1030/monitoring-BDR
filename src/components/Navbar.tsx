@@ -175,46 +175,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
       </div>
-
-      {/* Role Navigation Bar */}
-      <div className="w-full px-3 sm:px-6 lg:px-8 xl:px-10 py-1.5 flex items-center justify-between overflow-x-auto gap-2 bg-slate-50/70">
-        <div className="flex items-center gap-1 min-w-max">
-          <span className="text-[11px] font-semibold text-slate-500 mr-1 hidden lg:inline">Bagian:</span>
-          {roles.map((r) => {
-            const isActive = currentRole === r.id;
-            return (
-              <button
-                key={r.id}
-                onClick={() => onRoleChange(r.id)}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
-                  isActive
-                    ? 'bg-sky-700 text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
-                }`}
-              >
-                {r.icon}
-                <span>{r.label}</span>
-                {r.id === 'teknik' && pendingPfkCount > 0 && (
-                  <span
-                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                      isActive ? 'bg-amber-300 text-slate-950' : 'bg-rose-100 text-rose-800'
-                    }`}
-                  >
-                    {pendingPfkCount}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="hidden md:flex items-center gap-2 text-xs text-slate-500 shrink-0">
-          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-          <span>
-            <strong className="text-slate-800">{totalRecords}</strong> permohonan
-          </span>
-        </div>
-      </div>
     </header>
   );
 };
+

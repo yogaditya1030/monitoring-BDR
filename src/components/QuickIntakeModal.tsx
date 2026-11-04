@@ -7,6 +7,7 @@ import {
   determineInitialWorkflow,
   formatRupiah,
   buildTeknikWaNotification,
+  TEKNIK_WA_CONTACTS,
 } from '../utils/plnValidation';
 import { queryPlnCentralApi } from '../services/mockApiValidation';
 import { MapLocationPicker } from './MapLocationPicker';
@@ -84,7 +85,7 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
   const [ktpPreviewUrl, setKtpPreviewUrl] = useState<string>('');
   const [showWaPreview, setShowWaPreview] = useState(true);
   const [sendWaToTeknik, setSendWaToTeknik] = useState(true);
-  const [teknikWaPhone, setTeknikWaPhone] = useState('08112500123');
+  const [teknikWaPhone, setTeknikWaPhone] = useState(TEKNIK_WA_CONTACTS[0].phone);
   const [formError, setFormError] = useState<string>('');
 
   // Conditional logic per user requirements:
@@ -264,8 +265,8 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
       keteranganPekerjaan: descWork,
       keteranganStatus:
         transaksi === 'PFK'
-          ? `Permohonan PFK (${kategoriPfk}): Notifikasi WA Survei telah dikirim ke Tim Teknik`
-          : 'Notifikasi WA Survei diteruskan ke Tim Teknik & menunggu verifikasi PP',
+          ? `Permohonan PFK (${kategoriPfk}): Notifikasi WA Survei otomatis dikirim ke 3 personil Tim Teknik (Barep Ariyanto, Bagus, Ari K) & data tersinkron otomatis`
+          : 'Notifikasi WA Survei otomatis dikirim ke 3 personil Tim Teknik (Barep Ariyanto, Bagus, Ari K) & data tersinkron otomatis',
       keteranganKendala: '-',
       linkMap: mapsLink,
       tglSurvei: '',
@@ -283,15 +284,15 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
           timestamp: new Date().toISOString(),
           actor: 'Security / Front Desk',
           role: 'security',
-          action: `Pendaftaran Permohonan (${transaksi}${transaksi === 'PFK' ? ` - ${kategoriPfk}` : ''}) & Notifikasi WA Tim Teknik`,
-          notes: `${workflowRouting.routingSummary} • WA Tim Teknik (${teknikWaPhone}) berisi No. HP Pelanggan (${kontakPerson.trim()}) & Maps (${mapsLink})`,
+          action: `Pendaftaran Permohonan (${transaksi}${transaksi === 'PFK' ? ` - ${kategoriPfk}` : ''}) • Auto-Kirim WA 3 Personil Teknik & Auto-Sinkron`,
+          notes: `${workflowRouting.routingSummary} • Otomatis terkirim ke Barep Ariyanto (+62852450477831), Bagus (+6285878315131), Ari K (+628562670122) berisi No. HP Pelanggan (${kontakPerson.trim()}) & Maps (${mapsLink})`,
         },
       ],
     };
 
-    onSubmit(newRecord, syncToSheets, {
-      sendToTeknik: sendWaToTeknik,
-      teknikPhone: teknikWaPhone,
+    onSubmit(newRecord, true, {
+      sendToTeknik: true,
+      teknikPhone: TEKNIK_WA_CONTACTS.map((c) => c.phone).join(', '),
     });
     onClose();
   };
@@ -444,29 +445,6 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
                 </div>
               </div>
             )}
-
-            {/* Routing Banner Announcement */}
-            <div
-              className={`mt-3 p-3.5 rounded-lg border flex items-start gap-3 ${
-                transaksi === 'PFK'
-                  ? 'bg-amber-50 border-amber-300 text-amber-900'
-                  : 'bg-sky-50 border-sky-200 text-sky-900'
-              }`}
-            >
-              {transaksi === 'PFK' ? (
-                <Zap className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-              ) : (
-                <FileText className="w-5 h-5 text-sky-600 shrink-0 mt-0.5" />
-              )}
-              <div className="text-xs">
-                <div className="font-bold">
-                  {transaksi === 'PFK'
-                    ? `ALUR PFK (${kategoriPfk}): Langsung Terhubung ke Tim Teknik ULP Borobudur`
-                    : 'ALUR PBPD: Verifikasi Dokumen oleh Pelayanan Pelanggan (PP)'}
-                </div>
-                <div className="text-slate-600 mt-0.5">{workflowRouting.routingSummary}</div>
-              </div>
-            </div>
           </div>
 
           {/* Step 2: Data Identitas & KTP Pemohon */}
@@ -590,7 +568,7 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Peruntukan Bangunan
@@ -627,19 +605,6 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
                 <span className="text-[10px] text-sky-700 block mt-0.5">
                   ⏱️ Titik awal perhitungan Counter Hari
                 </span>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Nomor Nota Dinas (Opsional)
-                </label>
-                <input
-                  type="text"
-                  placeholder="Contoh: 23/04/2026 atau kosongkan utk auto"
-                  value={noNodin}
-                  onChange={(e) => setNoNodin(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
-                />
               </div>
             </div>
           </div>
@@ -864,110 +829,35 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
             )}
           </div>
 
-          {/* Step 6: Upload Surat Permohonan & Opsi Sinkronisasi */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-200">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Upload Surat Permohonan Pelanggan
-              </label>
-              <div className="border border-dashed border-slate-300 rounded-lg p-3 text-center bg-slate-50 hover:bg-slate-100 transition cursor-pointer">
-                <input
-                  type="file"
-                  id="file-upload"
-                  accept="image/*,.pdf"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) {
-                      setAttachedFileName(f.name);
-                      const reader = new FileReader();
-                      reader.onloadend = () => {
-                        if (typeof reader.result === 'string') {
-                          setAttachedFileDataUrl(reader.result);
-                        }
-                      };
-                      reader.readAsDataURL(f);
-                    }
-                  }}
-                />
-                <label htmlFor="file-upload" className="cursor-pointer">
-                  <Upload className="w-5 h-5 text-slate-400 mx-auto mb-1" />
-                  <span className="text-xs text-sky-700 font-semibold">
-                    {attachedFileName ? `File terpilih: ${attachedFileName}` : 'Pilih Surat Permohonan (PDF/Foto)'}
-                  </span>
-                </label>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <label className="block text-xs font-semibold text-slate-700">
-                6. Integrasi &amp; Notifikasi WhatsApp Tim Teknik
-              </label>
-
-              <label className="flex items-start gap-2 text-xs text-slate-800 cursor-pointer bg-emerald-50/80 border border-emerald-200 p-2.5 rounded-lg">
-                <input
-                  type="checkbox"
-                  checked={sendWaToTeknik}
-                  onChange={(e) => setSendWaToTeknik(e.target.checked)}
-                  className="rounded text-emerald-600 focus:ring-emerald-500 mt-0.5"
-                />
-                <span className="leading-snug">
-                  <strong className="text-emerald-950 block">
-                    Kirim Notifikasi WA ke Tim Teknik saat disimpan
-                  </strong>
-                  <span className="text-[11px] text-emerald-800">
-                    Berisi informasi pelanggan, No. HP pelanggan ({kontakPerson || 'belum diisi'}), dan link Google Maps titik survei.
-                  </span>
-                </span>
-              </label>
-
-              {sendWaToTeknik && (
-                <div className="space-y-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Nomor WhatsApp Tim Teknik / Piket Survei ULP Borobudur:
-                    </label>
-                    <div className="relative">
-                      <Phone className="w-3.5 h-3.5 text-emerald-600 absolute left-2.5 top-2.5" />
-                      <input
-                        type="tel"
-                        value={teknikWaPhone}
-                        onChange={(e) => setTeknikWaPhone(e.target.value)}
-                        placeholder="Contoh: 08112500123"
-                        className="w-full pl-8 pr-3 py-1.5 border border-slate-300 rounded-md text-xs font-mono bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
-                      />
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowWaPreview(!showWaPreview)}
-                    className="text-xs text-emerald-700 hover:text-emerald-800 font-semibold flex items-center gap-1 cursor-pointer"
-                  >
-                    <Send className="w-3.5 h-3.5 text-emerald-600" />
-                    {showWaPreview
-                      ? 'Sembunyikan draf WA Tim Teknik'
-                      : 'Lihat draf WA ke Tim Teknik (Info Pelanggan, No. HP & Maps)'}
-                  </button>
-
-                  {showWaPreview && (
-                    <div className="p-2.5 bg-emerald-950 text-emerald-100 border border-emerald-800 rounded-lg text-[11px] space-y-1 font-mono whitespace-pre-wrap max-h-44 overflow-y-auto">
-                      {liveWaPayload.message}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer pt-1">
-                <input
-                  type="checkbox"
-                  checked={syncToSheets}
-                  onChange={(e) => setSyncToSheets(e.target.checked)}
-                  className="rounded text-sky-600 focus:ring-sky-500"
-                />
-                <span className="flex items-center gap-1">
-                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-                  Sinkronkan baris ini secara otomatis ke Google Sheets
+          {/* Step 6: Upload Surat Permohonan Pelanggan */}
+          <div className="pt-2 border-t border-slate-200">
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Upload Surat Permohonan Pelanggan
+            </label>
+            <div className="border border-dashed border-slate-300 rounded-lg p-3 text-center bg-slate-50 hover:bg-slate-100 transition cursor-pointer">
+              <input
+                type="file"
+                id="file-upload"
+                accept="image/*,.pdf"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) {
+                    setAttachedFileName(f.name);
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                      if (typeof reader.result === 'string') {
+                        setAttachedFileDataUrl(reader.result);
+                      }
+                    };
+                    reader.readAsDataURL(f);
+                  }
+                }}
+              />
+              <label htmlFor="file-upload" className="cursor-pointer">
+                <Upload className="w-5 h-5 text-slate-400 mx-auto mb-1" />
+                <span className="text-xs text-sky-700 font-semibold">
+                  {attachedFileName ? `File terpilih: ${attachedFileName}` : 'Pilih Surat Permohonan (PDF/Foto)'}
                 </span>
               </label>
             </div>

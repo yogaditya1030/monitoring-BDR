@@ -237,36 +237,36 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/60 backdrop-blur-xs overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-1.5 sm:p-3 bg-slate-950/60 backdrop-blur-xs overflow-hidden">
       <div
         className={`bg-white rounded-xl shadow-2xl border border-slate-200 w-full ${
           activeTab === 'teknik' ? 'max-w-6xl' : 'max-w-4xl'
-        } my-4 overflow-hidden animate-in fade-in zoom-in-95 duration-200 transition-all`}
+        } max-h-[96vh] sm:max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 transition-all`}
       >
         {/* Header */}
-        <div className="bg-sky-900 text-white px-6 py-4 flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs px-2 py-0.5 rounded bg-amber-400 text-slate-950 font-bold uppercase">
+        <div className="shrink-0 bg-sky-900 text-white px-3.5 sm:px-6 py-2.5 sm:py-3.5 flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] px-2 py-0.5 rounded bg-amber-400 text-slate-950 font-bold uppercase shrink-0">
                 {item.transaksi}
               </span>
-              <h2 className="text-base sm:text-lg font-bold">{item.projectName}</h2>
+              <h2 className="text-sm sm:text-lg font-bold truncate">{item.projectName}</h2>
             </div>
-            <p className="text-xs text-sky-200 mt-0.5">
+            <p className="text-[11px] sm:text-xs text-sky-200 mt-0.5 truncate">
               No Nodin: {item.noNodin} | Daya: {item.dayaBaru.toLocaleString('id-ID')} VA ({tarif}) | Status Saat Ini: {item.status}
             </p>
           </div>
-          <button onClick={onClose} className="text-sky-200 hover:text-white p-1 rounded-lg">
+          <button onClick={onClose} className="text-sky-200 hover:text-white p-1.5 rounded-lg shrink-0 cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Department Tabs */}
-        <div className="flex border-b border-slate-200 bg-slate-50 px-6 pt-3 gap-2 overflow-x-auto flex-nowrap">
+        <div className="shrink-0 flex border-b border-slate-200 bg-slate-50 px-2.5 sm:px-6 pt-2 gap-1.5 overflow-x-auto flex-nowrap">
           <button
             type="button"
             onClick={() => setActiveTab('pp')}
-            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition shrink-0 whitespace-nowrap cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 sm:px-4 py-2 text-xs font-bold border-b-2 transition shrink-0 whitespace-nowrap cursor-pointer ${
               activeTab === 'pp'
                 ? 'border-teal-600 text-teal-800 bg-white rounded-t-lg shadow-xs'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -279,7 +279,7 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
           <button
             type="button"
             onClick={() => setActiveTab('teknik')}
-            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition shrink-0 whitespace-nowrap cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 sm:px-4 py-2 text-xs font-bold border-b-2 transition shrink-0 whitespace-nowrap cursor-pointer ${
               activeTab === 'teknik'
                 ? 'border-amber-600 text-amber-800 bg-white rounded-t-lg shadow-xs'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -292,7 +292,7 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
           <button
             type="button"
             onClick={() => setActiveTab('k3l')}
-            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition shrink-0 whitespace-nowrap cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 sm:px-4 py-2 text-xs font-bold border-b-2 transition shrink-0 whitespace-nowrap cursor-pointer ${
               activeTab === 'k3l'
                 ? 'border-purple-600 text-purple-800 bg-white rounded-t-lg shadow-xs'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -305,7 +305,7 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
           <button
             type="button"
             onClick={() => setActiveTab('te')}
-            className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold border-b-2 transition shrink-0 whitespace-nowrap cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 sm:px-4 py-2 text-xs font-bold border-b-2 transition shrink-0 whitespace-nowrap cursor-pointer ${
               activeTab === 'te'
                 ? 'border-emerald-600 text-emerald-800 bg-white rounded-t-lg shadow-xs'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -317,7 +317,7 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
         </div>
 
         {/* Tab Body */}
-        <div className="p-5 sm:p-6 max-h-[72vh] overflow-y-auto space-y-4">
+        <div className="flex-1 p-2.5 sm:p-5 overflow-y-auto space-y-3.5 sm:space-y-4">
           {/* TAB 1: PP */}
           {activeTab === 'pp' && (
             <div className="space-y-4">
@@ -1186,19 +1186,19 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
         </div>
 
         {/* Modal Footer */}
-        <div className="bg-slate-100 px-6 py-3 border-t border-slate-200 flex items-center justify-between">
+        <div className="shrink-0 bg-slate-100 px-3.5 sm:px-6 py-2.5 sm:py-3 border-t border-slate-200 flex items-center justify-between gap-2">
           <button
             onClick={onClose}
-            className="px-4 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white transition"
+            className="px-3.5 sm:px-4 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white transition cursor-pointer"
           >
             Batal
           </button>
           <button
             onClick={handleApplyAction}
-            className="px-5 py-2 bg-sky-700 hover:bg-sky-800 text-white font-bold rounded-lg text-xs shadow-md flex items-center gap-2 transition"
+            className="px-4 sm:px-5 py-2 bg-sky-700 hover:bg-sky-800 text-white font-bold rounded-lg text-xs shadow-md flex items-center gap-1.5 sm:gap-2 transition cursor-pointer"
           >
-            <span>Simpan Perubahan & Audit Log</span>
-            <ArrowRight className="w-4 h-4" />
+            <span>Simpan Perubahan &amp; Audit Log</span>
+            <ArrowRight className="w-4 h-4 shrink-0" />
           </button>
         </div>
       </div>
