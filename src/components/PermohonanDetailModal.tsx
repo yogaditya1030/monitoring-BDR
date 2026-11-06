@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { PermohonanItem, UserRole } from '../types';
 import { StatusWorkflowBadge, TransaksiBadge } from './StatusWorkflowBadge';
 import { formatRupiah, formatPowerVA, formatTeStandSummary, calculateDaysSinceInput } from '../utils/plnValidation';
@@ -17,6 +17,10 @@ import {
   ExternalLink,
   ShieldCheck,
   CheckCircle2,
+  Compass,
+  FileSpreadsheet,
+  Printer,
+  ChevronRight,
 } from 'lucide-react';
 
 interface DetailModalProps {
@@ -34,6 +38,8 @@ export const PermohonanDetailModal: React.FC<DetailModalProps> = ({
   onOpenWorkflowAction,
   currentRole,
 }) => {
+  const [activeSubTab, setActiveSubTab] = useState<'ringkasan' | 'sketsa' | 'rab'>('ringkasan');
+
   if (!isOpen || !item) return null;
 
   const dayInfo = calculateDaysSinceInput(item);
@@ -52,7 +58,7 @@ export const PermohonanDetailModal: React.FC<DetailModalProps> = ({
       label: 'Survei Lapangan',
       date: item.tglSurvei,
       done:
-        Boolean(item.tglSurvei || item.nomorTiang || item.nomorGardu) ||
+        Boolean(item.tglSurvei || item.nomorTiang || item.nomorGardu || (item.surveyRabDesign?.nodes?.length ?? 0) > 0) ||
         ['RAB', 'TANPA PERLUASAN', 'BAYAR', 'KERJA', 'NYALA', 'PDL'].includes(item.status),
     },
     {
@@ -67,6 +73,8 @@ export const PermohonanDetailModal: React.FC<DetailModalProps> = ({
     { label: 'Komisioning TE & Nyala', date: item.tglPenyalaan, done: !!item.tglPenyalaan || item.status === 'PDL' },
     { label: 'Penyelesaian PDL Akhir', date: item.tglPdlUpdate, done: item.status === 'PDL' },
   ];
+
+  const design = item.surveyRabDesign;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-950/60 backdrop-blur-xs overflow-y-auto">
@@ -87,40 +95,102 @@ export const PermohonanDetailModal: React.FC<DetailModalProps> = ({
           </button>
         </div>
 
-        <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
-          {/* Status & Action Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-slate-50 border border-slate-200 rounded-lg">
-            <div className="flex flex-wrap items-center gap-4">
-              <div>
-                <div className="text-xs text-slate-500 font-semibold mb-1">Status Progres Saat Ini:</div>
-                <StatusWorkflowBadge status={item.status} showRoleInfo={true} />
-              </div>
-              <div className="sm:border-l sm:border-slate-200 sm:pl-4">
-                <div className="text-xs text-slate-500 font-semibold mb-1">Counter Hari Sejak Input Surat:</div>
-                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-bold ${dayBadgeClass}`}>
-                  <Clock className="w-3.5 h-3.5 shrink-0" />
-                  <span>{dayInfo.fullLabel}</span>
-                </span>
-              </div>
-            </div>
-
+        {/* Sub-Tab Navigation inside Dossier Detail */}
+        <div className="bg-slate-100 px-6 py-2 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
             <button
-              onClick={() => {
-                onClose();
-                onOpenWorkflowAction(item);
-              }}
-              className="px-4 py-2 bg-sky-700 hover:bg-sky-800 text-white font-bold rounded-lg text-xs shadow-xs transition flex items-center gap-1.5"
+              type="button"
+              onClick={() => setActiveSubTab('ringkasan')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                activeSubTab === 'ringkasan'
+                  ? 'bg-sky-700 text-white shadow-xs'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+              }`}
             >
-              <Wrench className="w-3.5 h-3.5" />
-              <span>Proses Tahap Selanjutnya ({currentRole.toUpperCase()})</span>
+              <FileText className="w-3.5 h-3.5" />
+              <span>1. Ringkasan &amp; Berkas</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('sketsa')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                activeSubTab === 'sketsa'
+                  ? 'bg-sky-700 text-white shadow-xs'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+              }`}
+            >
+              <Compass className="w-3.5 h-3.5" />
+              <span>
+                2. Sketsa Gambar Jaringan{' '}
+                {design?.nodes?.length ? `(${design.nodes.length} Titik)` : ''}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('rab')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                activeSubTab === 'rab'
+                  ? 'bg-sky-700 text-white shadow-xs'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>
+                3. Tabel RAB Resmi PLN{' '}
+                {item.rab > 0 ? `(${formatRupiah(item.rab)})` : ''}
+              </span>
             </button>
           </div>
 
-          {/* Workflow Progress Timeline */}
-          <div>
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3">
-              Tahapan Pekerjaan Terpadu (Survei &amp; RAB Terpisah)
-            </h3>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onOpenWorkflowAction(item);
+            }}
+            className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-extrabold shadow-xs transition cursor-pointer"
+          >
+            <Wrench className="w-3.5 h-3.5" />
+            <span>Buka / Edit di Studio Survei</span>
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+          {activeSubTab === 'ringkasan' && (
+            <>
+              {/* Status & Action Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-slate-50 border border-slate-200 rounded-lg">
+                <div className="flex flex-wrap items-center gap-4">
+                  <div>
+                    <div className="text-xs text-slate-500 font-semibold mb-1">Status Progres Saat Ini:</div>
+                    <StatusWorkflowBadge status={item.status} showRoleInfo={true} />
+                  </div>
+                  <div className="sm:border-l sm:border-slate-200 sm:pl-4">
+                    <div className="text-xs text-slate-500 font-semibold mb-1">Counter Hari Sejak Input Surat:</div>
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-bold ${dayBadgeClass}`}>
+                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      <span>{dayInfo.fullLabel}</span>
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    onClose();
+                    onOpenWorkflowAction(item);
+                  }}
+                  className="px-4 py-2 bg-sky-700 hover:bg-sky-800 text-white font-bold rounded-lg text-xs shadow-xs transition flex items-center gap-1.5"
+                >
+                  <Wrench className="w-3.5 h-3.5" />
+                  <span>Proses Tahap Selanjutnya ({currentRole.toUpperCase()})</span>
+                </button>
+              </div>
+
+              {/* Workflow Progress Timeline */}
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3">
+                  Tahapan Pekerjaan Terpadu (Survei &amp; RAB Terpisah)
+                </h3>
             <div className="grid grid-cols-2 sm:grid-cols-7 gap-2">
               {milestoneSteps.map((st, i) => (
                 <div
@@ -443,31 +513,292 @@ export const PermohonanDetailModal: React.FC<DetailModalProps> = ({
             </div>
           </div>
 
-          {/* Historical Audit Trail */}
-          <div>
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-2 flex items-center gap-1.5">
-              <Clock className="w-4 h-4 text-slate-500" />
-              Riwayat Perubahan & Audit Log
-            </h3>
-            <div className="space-y-2">
-              {item.historyLogs && item.historyLogs.length > 0 ? (
-                item.historyLogs.map((log) => (
-                  <div key={log.id} className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs">
-                    <div className="flex items-center justify-between text-slate-500 text-[11px] mb-1">
-                      <span className="font-semibold text-slate-800">{log.actor} ({log.role.toUpperCase()})</span>
-                      <span>{new Date(log.timestamp).toLocaleString('id-ID')}</span>
+            </>
+          )}
+
+          {/* TAB 2: SKETSA GAMBAR JARINGAN HASIL SURVEI */}
+          {activeSubTab === 'sketsa' && (
+            <div className="space-y-4">
+              {design && design.nodes && design.nodes.length > 0 ? (
+                <div className="space-y-4">
+                  {/* Summary Header */}
+                  <div className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white p-4 rounded-xl shadow-md border border-indigo-900/50">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] uppercase font-mono text-amber-300 font-extrabold tracking-wider">
+                          PT. PLN (PERSERO) UID JAWA TENGAH • UP3 MAGELANG • ULP BOROBUDUR
+                        </div>
+                        <h4 className="text-base font-extrabold text-white mt-0.5">
+                          {design.judulGambar || item.projectName}
+                        </h4>
+                        <p className="text-xs text-slate-300 mt-0.5">
+                          Lokasi: {design.lokasiPekerjaan || item.alamat}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onClose();
+                            onOpenWorkflowAction(item);
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs shadow-xs flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Wrench className="w-3.5 h-3.5" />
+                          <span>Buka di Studio GIS</span>
+                        </button>
+                      </div>
                     </div>
-                    <div className="font-medium text-slate-900">{log.action}</div>
-                    {log.notes && <div className="text-slate-600 text-[11px] mt-0.5">{log.notes}</div>}
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 pt-3 border-t border-slate-800 text-xs">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block uppercase">Digambar:</span>
+                        <span className="font-extrabold text-white">{design.digambarOleh || item.petugasSurvei || '-'}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block uppercase">Direncanakan:</span>
+                        <span className="font-extrabold text-white">{design.direncanakanOleh || item.petugasSurvei || '-'}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block uppercase">Diperiksa:</span>
+                        <span className="font-extrabold text-white">{design.diperiksaOleh || 'TL TEKNIK'}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block uppercase">Disetujui:</span>
+                        <span className="font-extrabold text-white">{design.disetujuiOleh || 'MANAJER'}</span>
+                      </div>
+                    </div>
                   </div>
-                ))
+
+                  {/* Node & Pole Grid */}
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wide mb-2 flex items-center justify-between">
+                      <span>Daftar Titik Tiang &amp; Gardu ({design.nodes.length} Titik Tersimpan):</span>
+                      <span className="text-[11px] text-slate-500 font-normal">
+                        {design.spans?.length || 0} Gawang Kabel
+                      </span>
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                      {design.nodes.map((node, nIdx) => (
+                        <div
+                          key={node.id}
+                          className={`p-3 rounded-lg border text-xs ${
+                            node.isBongkar
+                              ? 'bg-rose-50/70 border-rose-300'
+                              : node.kind.includes('RENCANA')
+                              ? 'bg-amber-50/60 border-amber-300'
+                              : 'bg-slate-50 border-slate-200'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="font-black font-mono text-slate-900">
+                              {node.kodeTiang}
+                            </span>
+                            <span
+                              className={`text-[9px] font-black px-1.5 py-0.2 rounded uppercase ${
+                                node.isBongkar
+                                  ? 'bg-rose-600 text-white'
+                                  : node.kind.includes('RENCANA')
+                                  ? 'bg-amber-500 text-slate-950'
+                                  : 'bg-slate-700 text-white'
+                              }`}
+                            >
+                              {node.isBongkar
+                                ? '✕ BONGKAR'
+                                : node.kind.replace('_', ' ')}
+                            </span>
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-500 mb-1">
+                            GPS: {node.lat.toFixed(5)}, {node.lng.toFixed(5)}
+                          </div>
+                          <div className="space-y-0.5 border-t border-slate-200/80 pt-1">
+                            <span className="text-[10px] font-bold text-slate-600 block">
+                              Konstruksi / Material:
+                            </span>
+                            {node.constructions?.length ? (
+                              node.constructions.map((c, cIdx) => (
+                                <div
+                                  key={cIdx}
+                                  className="text-[11px] font-medium text-slate-800 flex items-center justify-between"
+                                >
+                                  <span>
+                                    • {c.qty}x {c.code}
+                                  </span>
+                                  {c.actionType && (
+                                    <span
+                                      className={`text-[9px] font-bold uppercase ${
+                                        c.actionType === 'BONGKAR'
+                                          ? 'text-rose-600'
+                                          : 'text-indigo-600'
+                                      }`}
+                                    >
+                                      {c.actionType}
+                                    </span>
+                                  )}
+                                </div>
+                              ))
+                            ) : (
+                              <span className="text-[10px] text-slate-400 italic">
+                                Belum ada konstruksi
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Span cables summary */}
+                  {design.spans && design.spans.length > 0 && (
+                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs">
+                      <span className="font-bold text-slate-800 block mb-1.5 uppercase text-[10px]">
+                        Tarikan Antar Gawang Jaringan:
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {design.spans.map((sp, sIdx) => {
+                          const fromN = design.nodes.find((n) => n.id === sp.fromNodeId);
+                          const toN = design.nodes.find((n) => n.id === sp.toNodeId);
+                          return (
+                            <span
+                              key={sp.id || sIdx}
+                              className="px-2 py-1 rounded bg-white border border-slate-300 font-mono text-[11px] text-slate-800 shadow-2xs"
+                            >
+                              {fromN?.kodeTiang || '?'} ➔ {toN?.kodeTiang || '?'}:{' '}
+                              <strong className="text-indigo-600">{sp.distanceMeters}m</strong>
+                              {sp.isBongkar ? ' (BKR)' : ''}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
               ) : (
-                <div className="text-xs text-slate-500 italic p-3 bg-slate-50 rounded">
-                  Belum ada log pergerakan tambahan.
+                <div className="p-8 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl text-center space-y-3">
+                  <Compass className="w-10 h-10 text-slate-400 mx-auto" />
+                  <div className="font-extrabold text-slate-800 text-sm">
+                    Belum Ada Gambar Sketsa Jaringan
+                  </div>
+                  <p className="text-xs text-slate-600 max-w-md mx-auto">
+                    Data sketsa gambar jaringan dan penempatan tiang belum dibuat untuk permohonan ini. Silakan buka Studio Survei Teknik untuk menggambar di peta GIS.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenWorkflowAction(item);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold shadow-xs cursor-pointer"
+                  >
+                    <Wrench className="w-4 h-4" />
+                    <span>Buka Studio Gambar Survei Sekarang</span>
+                  </button>
                 </div>
               )}
             </div>
-          </div>
+          )}
+
+          {/* TAB 3: TABEL RENCANA ANGGARAN BIAYA (RAB) */}
+          {activeSubTab === 'rab' && (
+            <div className="space-y-4">
+              {item.rab > 0 || (design?.rabItems && design.rabItems.length > 0) ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3 bg-emerald-50 border border-emerald-300 p-3.5 rounded-xl text-emerald-950">
+                    <div>
+                      <span className="text-[10px] font-extrabold uppercase text-emerald-800 block">
+                        TOTAL ESTIMASI RENCANA ANGGARAN BIAYA (+PPN {design?.ppnPercent || 11}%):
+                      </span>
+                      <span className="text-xl font-black text-emerald-900 font-mono">
+                        {formatRupiah(item.rab)}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenWorkflowAction(item);
+                      }}
+                      className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Wrench className="w-3.5 h-3.5" />
+                      <span>Edit Rincian RAB di Studio</span>
+                    </button>
+                  </div>
+
+                  {/* Render saved items table if available */}
+                  {design?.rabItems && design.rabItems.length > 0 && (
+                    <div className="border border-slate-300 rounded-lg overflow-x-auto bg-white shadow-2xs">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-100 text-slate-800 border-b border-slate-300 text-[10px] font-bold uppercase">
+                            <th className="p-2 border-r border-slate-300">No</th>
+                            <th className="p-2 border-r border-slate-300">Uraian Pekerjaan / Material</th>
+                            <th className="p-2 border-r border-slate-300 text-center">Gol</th>
+                            <th className="p-2 border-r border-slate-300 text-center">Sat</th>
+                            <th className="p-2 border-r border-slate-300 text-center">Vol</th>
+                            <th className="p-2 border-r border-slate-300 text-right">Harga Satuan</th>
+                            <th className="p-2 text-right">Total (Rp)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200">
+                          {design.rabItems.map((rItem, idx) => {
+                            const subTotal = (rItem.volume || 1) * (rItem.hargaSatuan || 0);
+                            return (
+                              <tr key={rItem.id || idx} className="hover:bg-slate-50">
+                                <td className="p-2 border-r border-slate-200 text-center text-slate-500 font-mono">
+                                  {idx + 1}
+                                </td>
+                                <td className="p-2 border-r border-slate-200 font-medium text-slate-900">
+                                  {rItem.uraian}
+                                </td>
+                                <td className="p-2 border-r border-slate-200 text-center text-[10px] font-bold text-slate-600">
+                                  {rItem.gol}
+                                </td>
+                                <td className="p-2 border-r border-slate-200 text-center text-slate-700">
+                                  {rItem.satuan}
+                                </td>
+                                <td className="p-2 border-r border-slate-200 text-center font-bold text-slate-900">
+                                  {rItem.volume}
+                                </td>
+                                <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
+                                  {rItem.hargaSatuan.toLocaleString('id-ID')}
+                                </td>
+                                <td className="p-2 text-right font-mono font-bold text-slate-900">
+                                  {subTotal.toLocaleString('id-ID')}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-8 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl text-center space-y-3">
+                  <FileSpreadsheet className="w-10 h-10 text-slate-400 mx-auto" />
+                  <div className="font-extrabold text-slate-800 text-sm">
+                    Belum Ada Data Rencana Anggaran Biaya (RAB)
+                  </div>
+                  <p className="text-xs text-slate-600 max-w-md mx-auto">
+                    RAB resmi 10 kolom belum digenerate untuk permohonan ini. Buka Studio Survei Teknik untuk menghitung otomatis dari titik konstruksi tiang dan tarikan kabel.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenWorkflowAction(item);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold shadow-xs cursor-pointer"
+                  >
+                    <Wrench className="w-4 h-4" />
+                    <span>Buka Studio Survei &amp; RAB</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Footer */}

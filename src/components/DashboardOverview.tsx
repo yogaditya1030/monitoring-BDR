@@ -856,6 +856,11 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                             {item.status === 'SURVEI' ? 'Belum Buat RAB' : 'Rp 0'}
                           </span>
                         )}
+                        {item.surveyRabDesign && (item.surveyRabDesign.nodes?.length || 0) > 0 && (
+                          <div className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200 mt-0.5">
+                            ✓ Sketsa ({item.surveyRabDesign.nodes.length} Titik)
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-2">
@@ -1008,11 +1013,15 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
                           <td className="py-3 px-3 font-semibold text-slate-800">
                             <div>{formatRupiah(item.rab)}</div>
-                            {(!item.rab || item.rab === 0) && (
+                            {item.surveyRabDesign && (item.surveyRabDesign.nodes?.length || 0) > 0 ? (
+                              <div className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 mt-0.5">
+                                ✓ Sketsa &amp; RAB ({item.surveyRabDesign.nodes.length} Titik)
+                              </div>
+                            ) : (!item.rab || item.rab === 0) ? (
                               <div className="text-[10px] font-semibold text-amber-800 mt-0.5">
                                 {item.status === 'SURVEI' ? 'Sudah Survei • Belum Buat RAB' : 'Belum Ada RAB'}
                               </div>
-                            )}
+                            ) : null}
                           </td>
 
                           <td className="py-3 px-3 text-[11px]">

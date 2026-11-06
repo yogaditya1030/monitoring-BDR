@@ -39,6 +39,7 @@ export interface PermohonanItem {
   kontakPerson: string;
   suratPermohonan: string;
   suratPermohonanDataUrl?: string; // Data URL (PDF/Gambar) berkas Surat Permohonan yang diunggah Security
+  suratPermohonanPages?: string[]; // Array multi-halaman berkas surat permohonan
   tglSurat: string;
   petugasSurvei: string;
   tagingLokasi: string; // "Lat, Long"

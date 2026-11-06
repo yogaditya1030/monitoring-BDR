@@ -559,6 +559,10 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
                 nomorGardu={nomorGardu}
                 nomorTiang={nomorTiang}
                 initialDesign={surveyRabDesign}
+                onAutoSyncDesign={(design, grandTotal) => {
+                  setSurveyRabDesign(design);
+                  setRab(grandTotal);
+                }}
                 onApplyRabDesign={(design, grandTotalRab, summaryNotes) => {
                   setSurveyRabDesign(design);
                   setRab(grandTotalRab);
@@ -569,6 +573,38 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
                     setKeteranganPekerjaan(summaryNotes);
                   }
                   setActionNotes(summaryNotes);
+                }}
+                onDirectSave={(design, grandTotalRab, summaryNotes) => {
+                  setSurveyRabDesign(design);
+                  setRab(grandTotalRab);
+                  const nextSt = grandTotalRab > 0 && item.status === 'SURVEI' ? 'RAB' : nextStatus;
+                  setNextStatus(nextSt);
+                  const updated: PermohonanItem = {
+                    ...item,
+                    status: nextSt,
+                    petugasSurvei: petugasSurvei || design.digambarOleh,
+                    nomorGardu: nomorGardu.trim() || item.nomorGardu,
+                    nomorTiang: nomorTiang.trim() || item.nomorTiang,
+                    tagingLokasi: tagingLokasi || item.tagingLokasi,
+                    rab: Number(grandTotalRab),
+                    keteranganPekerjaan: summaryNotes,
+                    surveyRabDesign: design,
+                    tglSurvei: item.tglSurvei || new Date().toISOString().split('T')[0],
+                    tglRab: new Date().toISOString().split('T')[0],
+                    updatedAt: new Date().toISOString(),
+                    historyLogs: [
+                      ...item.historyLogs,
+                      {
+                        id: `log-${Date.now()}`,
+                        timestamp: new Date().toISOString(),
+                        actor: `Petugas Survei Teknik (${petugasSurvei || design.digambarOleh || 'Teknik'})`,
+                        role: 'teknik',
+                        action: `Penyusunan Sketsa Survei (${design.nodes.length} Titik) & RAB Otomatis (${formatRupiah(grandTotalRab)})`,
+                        notes: summaryNotes,
+                      },
+                    ],
+                  };
+                  onSave(updated);
                 }}
               />
             </div>
