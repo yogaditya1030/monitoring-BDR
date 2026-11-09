@@ -81,6 +81,7 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
   const [isQueryingApi, setIsQueryingApi] = useState(false);
   const [attachedFileName, setAttachedFileName] = useState<string>('');
   const [attachedFileDataUrl, setAttachedFileDataUrl] = useState<string>('');
+  const [attachedFilePages, setAttachedFilePages] = useState<string[]>([]);
   const [ktpFileName, setKtpFileName] = useState<string>('');
   const [ktpPreviewUrl, setKtpPreviewUrl] = useState<string>('');
   const [showWaPreview, setShowWaPreview] = useState(true);
@@ -255,6 +256,12 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
       fotoKtpNpwp: ktpFileName || 'KTP_Pelanggan_Terlampir.jpg',
       suratPermohonan: attachedFileName || `Surat_Permohonan_${projectName.replace(/\s+/g, '_')}.pdf`,
       suratPermohonanDataUrl: attachedFileDataUrl || undefined,
+      suratPermohonanPages:
+        attachedFilePages.length > 0
+          ? attachedFilePages
+          : attachedFileDataUrl
+          ? [attachedFileDataUrl]
+          : undefined,
       tglSurat: tglSurat || new Date().toISOString().split('T')[0],
       petugasSurvei: '',
       tagingLokasi: coordinates.trim(),
@@ -829,35 +836,52 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
             )}
           </div>
 
-          {/* Step 6: Upload Surat Permohonan Pelanggan */}
+          {/* Step 6: Upload Surat Permohonan Pelanggan (Mendukung Multi-Halaman) */}
           <div className="pt-2 border-t border-slate-200">
             <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Upload Surat Permohonan Pelanggan
+              Upload Surat Permohonan Pelanggan (Bisa Lebih dari 1 Halaman)
             </label>
             <div className="border border-dashed border-slate-300 rounded-lg p-3 text-center bg-slate-50 hover:bg-slate-100 transition cursor-pointer">
               <input
                 type="file"
                 id="file-upload"
+                multiple
                 accept="image/*,.pdf"
                 className="hidden"
                 onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) {
-                    setAttachedFileName(f.name);
-                    const reader = new FileReader();
-                    reader.onloadend = () => {
-                      if (typeof reader.result === 'string') {
-                        setAttachedFileDataUrl(reader.result);
+                  const files: File[] = Array.from(e.target.files || []);
+                  if (files.length > 0) {
+                    setAttachedFileName(
+                      files.length === 1
+                        ? files[0].name
+                        : `${files[0].name} (+${files.length - 1} halaman)`
+                    );
+                    Promise.all(
+                      files.map(
+                        (file: File) =>
+                          new Promise<string>((resolve) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () =>
+                              resolve(typeof reader.result === 'string' ? reader.result : '');
+                            reader.readAsDataURL(file);
+                          })
+                      )
+                    ).then((urls) => {
+                      const valid = urls.filter(Boolean);
+                      if (valid.length > 0) {
+                        setAttachedFileDataUrl(valid[0]);
+                        setAttachedFilePages(valid);
                       }
-                    };
-                    reader.readAsDataURL(f);
+                    });
                   }
                 }}
               />
               <label htmlFor="file-upload" className="cursor-pointer">
                 <Upload className="w-5 h-5 text-slate-400 mx-auto mb-1" />
-                <span className="text-xs text-sky-700 font-semibold">
-                  {attachedFileName ? `File terpilih: ${attachedFileName}` : 'Pilih Surat Permohonan (PDF/Foto)'}
+                <span className="text-xs text-sky-700 font-semibold block">
+                  {attachedFileName
+                    ? `Surat terpilih (${attachedFilePages.length || 1} Halaman): ${attachedFileName}`
+                    : 'Pilih Surat Permohonan (PDF/Foto — Bisa pilih banyak halaman sekaligus)'}
                 </span>
               </label>
             </div>

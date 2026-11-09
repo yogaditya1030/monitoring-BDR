@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { PermohonanItem, StatusPermohonan, SurveyRabDesign, UserRole } from '../types';
-import { getTeStandFormConfig } from '../utils/plnValidation';
+import { getTeStandFormConfig, formatRupiah } from '../utils/plnValidation';
 import { TeknikSurveyRabStudio } from './TeknikSurveyRabStudio';
 import {
   X,
@@ -79,7 +79,22 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
     setKeteranganPekerjaan(item.keteranganPekerjaan || '');
     setSurveyRabDesign(item.surveyRabDesign);
     setNextStatus(item.status);
-  }, [item.id, item.tagingLokasi]);
+  }, [item.id]);
+
+  const hasSurveyData = Boolean(
+    (surveyRabDesign?.nodes && surveyRabDesign.nodes.length > 0) ||
+    (item.surveyRabDesign?.nodes && item.surveyRabDesign.nodes.length > 0) ||
+    (petugasSurvei.trim().length > 0 && petugasSurvei.trim() !== '-') ||
+    nomorTiang.trim().length > 0 ||
+    nomorGardu.trim().length > 0 ||
+    Boolean(item.tglSurvei) ||
+    rab > 0 ||
+    item.rab > 0
+  );
+  const surveyNodeCount =
+    surveyRabDesign?.nodes?.length ||
+    item.surveyRabDesign?.nodes?.length ||
+    (nomorTiang ? 1 : 0);
 
   // Form State - K3L
   const [workingPermit, setWorkingPermit] = useState(item.workingPermit || `WP-K3L-${new Date().getFullYear()}-${item.id.slice(0, 4).toUpperCase()}`);
@@ -128,6 +143,7 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
   const [nextStatus, setNextStatus] = useState<StatusPermohonan>(item.status);
   const [actionNotes, setActionNotes] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [savedBanner, setSavedBanner] = useState<string | null>(null);
 
   // Mock SVGs for demo testing
   const MOCK_METER_SEBELUM = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200"><rect width="300" height="200" fill="%23f1f5f9"/><rect x="40" y="30" width="220" height="140" rx="8" fill="%23334155"/><rect x="70" y="55" width="160" height="50" rx="4" fill="%231e293b"/><text x="150" y="86" fill="%2338bdf8" font-family="monospace" font-size="20" font-weight="bold" text-anchor="middle">04891.2 kWh</text><text x="150" y="145" fill="%2394a3b8" font-family="sans-serif" font-size="11" font-weight="bold" text-anchor="middle">FOTO METER SEBELUM (EKSISTING)</text></svg>';
@@ -148,21 +164,35 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
     }
   };
 
-  const handleApplyAction = () => {
+  const handleApplyAction = (shouldClose: boolean = false) => {
     setValidationError(null);
+
+    const effectiveStatus: StatusPermohonan =
+      activeTab === 'teknik' && Number(rab) > 0 && nextStatus === 'SURVEI'
+        ? 'RAB'
+        : nextStatus;
+    if (effectiveStatus !== nextStatus) {
+      setNextStatus(effectiveStatus);
+    }
 
     const updated: PermohonanItem = {
       ...item,
-      status: nextStatus,
+      status: effectiveStatus,
       tarif,
-      petugasSurvei,
-      nomorGardu: nomorGardu.trim(),
-      nomorTiang: nomorTiang.trim(),
+      petugasSurvei: petugasSurvei || surveyRabDesign?.digambarOleh || item.petugasSurvei,
+      nomorGardu: nomorGardu.trim() || item.nomorGardu,
+      nomorTiang: nomorTiang.trim() || item.nomorTiang,
       tagingLokasi,
       rab: Number(rab),
       noPkVendor,
       keteranganPekerjaan,
       surveyRabDesign,
+      suratPermohonanPages:
+        surveyRabDesign?.suratPermohonanPages && surveyRabDesign.suratPermohonanPages.length > 0
+          ? surveyRabDesign.suratPermohonanPages
+          : item.suratPermohonanPages,
+      suratPermohonanDataUrl:
+        surveyRabDesign?.suratPermohonanPages?.[0] || item.suratPermohonanDataUrl,
       workingPermit: activeTab === 'k3l' ? workingPermit : item.workingPermit,
       nomorKwhBaru,
       merkKwh,
@@ -190,16 +220,16 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
       nomorPdl,
       tglBayarBp: statusBayar ? item.tglBayarBp || new Date().toISOString().split('T')[0] : item.tglBayarBp,
       tglSurvei:
-        activeTab === 'teknik' && (nextStatus === 'SURVEI' || nextStatus === 'RAB' || petugasSurvei || nomorTiang || nomorGardu)
+        activeTab === 'teknik' && (effectiveStatus === 'SURVEI' || effectiveStatus === 'RAB' || petugasSurvei || nomorTiang || nomorGardu)
           ? item.tglSurvei || new Date().toISOString().split('T')[0]
           : item.tglSurvei,
       tglRab:
-        activeTab === 'teknik' && (nextStatus === 'RAB' || Number(rab) > 0)
+        activeTab === 'teknik' && (effectiveStatus === 'RAB' || Number(rab) > 0)
           ? item.tglRab || new Date().toISOString().split('T')[0]
           : item.tglRab,
       tglWorkingPermit: activeTab === 'k3l' ? new Date().toISOString().split('T')[0] : item.tglWorkingPermit,
-      tglPenyalaan: nextStatus === 'NYALA' ? new Date().toISOString().split('T')[0] : item.tglPenyalaan,
-      tglPdlUpdate: nextStatus === 'PDL' ? new Date().toISOString().split('T')[0] : item.tglPdlUpdate,
+      tglPenyalaan: effectiveStatus === 'NYALA' ? new Date().toISOString().split('T')[0] : item.tglPenyalaan,
+      tglPdlUpdate: effectiveStatus === 'PDL' ? new Date().toISOString().split('T')[0] : item.tglPdlUpdate,
       updatedAt: new Date().toISOString(),
       historyLogs: [
         ...item.historyLogs,
@@ -208,14 +238,14 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
           timestamp: new Date().toISOString(),
           actor: `Petugas Bagian ${activeTab.toUpperCase()}`,
           role: activeTab as UserRole,
-          action: `Pembaruan Tahap (${activeTab.toUpperCase()}) -> Status ${nextStatus}`,
-          notes: actionNotes || `Update data teknis & validasi kelengkapan berkas TE ${activeTab.toUpperCase()}`,
+          action: `Pembaruan Tahap (${activeTab.toUpperCase()}) -> Status ${effectiveStatus}`,
+          notes: actionNotes || `Update data teknis, Gambar Sketsa & RAB (${formatRupiah(Number(rab))})`,
         },
       ],
     };
 
     // Validasi aturan SOP PDL jika status diarahkan ke PDL
-    if (nextStatus === 'PDL') {
+    if (effectiveStatus === 'PDL') {
       const hasSebelum = Boolean(updated.fotoMeterSebelum);
       const hasSesudah = Boolean(updated.fotoMeterSesudah);
       const hasIdpelTet = Boolean(updated.idPelTetangga && updated.idPelTetangga.trim() !== '');
@@ -233,7 +263,16 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
     }
 
     onSave(updated);
-    onClose();
+    if (shouldClose) {
+      onClose();
+    } else {
+      setSavedBanner(
+        `✓ Gambar Sketsa (${surveyRabDesign?.nodes?.length || 0} Titik) & RAB (${formatRupiah(
+          Number(rab)
+        )}) berhasil disimpan dan tetap tampil di aplikasi!`
+      );
+      setTimeout(() => setSavedBanner(null), 5000);
+    }
   };
 
   return (
@@ -469,9 +508,16 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
                   <h4 className="text-xs font-extrabold uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
                     <span>📐 Data Survei Lapangan Teknik (Status: SURVEI)</span>
                   </h4>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
-                    {nomorGardu && nomorTiang && petugasSurvei ? '✓ Sudah Survei Lengkap' : '⏳ Menunggu Data Survei'}
-                  </span>
+                  {hasSurveyData ? (
+                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                      ✓ Sudah Disurvei {surveyNodeCount > 0 ? `(${surveyNodeCount} Titik)` : ''}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                      ⏳ Menunggu Data Survei
+                    </span>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -577,18 +623,34 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
                 onDirectSave={(design, grandTotalRab, summaryNotes) => {
                   setSurveyRabDesign(design);
                   setRab(grandTotalRab);
+                  const effectivePetugas = petugasSurvei.trim() || design.digambarOleh || item.petugasSurvei || 'Bambang Kusuma (Teknik)';
+                  const effectiveGardu = nomorGardu.trim() || (design.nodes?.find(n => n.kind.includes('GARDU'))?.kodeTiang || '') || item.nomorGardu || 'GD-BBD-018';
+                  const effectiveTiang = nomorTiang.trim() || design.nodes?.[0]?.kodeTiang || item.nomorTiang || 'MKD-TR-042/12';
+                  const effectiveTaging = tagingLokasi || (design.nodes?.[0] ? `${design.nodes[0].lat}, ${design.nodes[0].lng}` : item.tagingLokasi);
+
+                  setPetugasSurvei(effectivePetugas);
+                  setNomorGardu(effectiveGardu);
+                  setNomorTiang(effectiveTiang);
+                  setTagingLokasi(effectiveTaging);
+
                   const nextSt = grandTotalRab > 0 && item.status === 'SURVEI' ? 'RAB' : nextStatus;
                   setNextStatus(nextSt);
                   const updated: PermohonanItem = {
                     ...item,
                     status: nextSt,
-                    petugasSurvei: petugasSurvei || design.digambarOleh,
-                    nomorGardu: nomorGardu.trim() || item.nomorGardu,
-                    nomorTiang: nomorTiang.trim() || item.nomorTiang,
-                    tagingLokasi: tagingLokasi || item.tagingLokasi,
+                    petugasSurvei: effectivePetugas,
+                    nomorGardu: effectiveGardu,
+                    nomorTiang: effectiveTiang,
+                    tagingLokasi: effectiveTaging,
                     rab: Number(grandTotalRab),
                     keteranganPekerjaan: summaryNotes,
                     surveyRabDesign: design,
+                    suratPermohonanPages:
+                      design.suratPermohonanPages && design.suratPermohonanPages.length > 0
+                        ? design.suratPermohonanPages
+                        : item.suratPermohonanPages,
+                    suratPermohonanDataUrl:
+                      design.suratPermohonanPages?.[0] || item.suratPermohonanDataUrl,
                     tglSurvei: item.tglSurvei || new Date().toISOString().split('T')[0],
                     tglRab: new Date().toISOString().split('T')[0],
                     updatedAt: new Date().toISOString(),
@@ -597,7 +659,7 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
                       {
                         id: `log-${Date.now()}`,
                         timestamp: new Date().toISOString(),
-                        actor: `Petugas Survei Teknik (${petugasSurvei || design.digambarOleh || 'Teknik'})`,
+                        actor: `Petugas Survei Teknik (${effectivePetugas})`,
                         role: 'teknik',
                         action: `Penyusunan Sketsa Survei (${design.nodes.length} Titik) & RAB Otomatis (${formatRupiah(grandTotalRab)})`,
                         notes: summaryNotes,
@@ -605,6 +667,12 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
                     ],
                   };
                   onSave(updated);
+                  setSavedBanner(
+                    `✓ Data Survei (${design.nodes.length} Titik) & RAB (${formatRupiah(
+                      grandTotalRab
+                    )}) berhasil disimpan dan tetap tampil di aplikasi!`
+                  );
+                  setTimeout(() => setSavedBanner(null), 5000);
                 }}
               />
             </div>
@@ -1222,20 +1290,40 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
         </div>
 
         {/* Modal Footer */}
-        <div className="shrink-0 bg-slate-100 px-3.5 sm:px-6 py-2.5 sm:py-3 border-t border-slate-200 flex items-center justify-between gap-2">
-          <button
-            onClick={onClose}
-            className="px-3.5 sm:px-4 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white transition cursor-pointer"
-          >
-            Batal
-          </button>
-          <button
-            onClick={handleApplyAction}
-            className="px-4 sm:px-5 py-2 bg-sky-700 hover:bg-sky-800 text-white font-bold rounded-lg text-xs shadow-md flex items-center gap-1.5 sm:gap-2 transition cursor-pointer"
-          >
-            <span>Simpan Perubahan &amp; Audit Log</span>
-            <ArrowRight className="w-4 h-4 shrink-0" />
-          </button>
+        <div className="shrink-0 bg-slate-100 px-3.5 sm:px-6 py-2.5 sm:py-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3.5 sm:px-4 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 hover:bg-white transition cursor-pointer"
+            >
+              Tutup
+            </button>
+            {savedBanner && (
+              <span className="px-3 py-1.5 rounded-lg bg-emerald-100 border border-emerald-400 text-emerald-950 text-xs font-bold flex items-center gap-1.5 animate-in fade-in">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{savedBanner}</span>
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleApplyAction(false)}
+              className="px-4 sm:px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs shadow-md flex items-center gap-1.5 sm:gap-2 transition cursor-pointer"
+            >
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>Simpan Gambar, RAB &amp; Perubahan</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyAction(true)}
+              className="px-3.5 sm:px-4 py-2 bg-sky-700 hover:bg-sky-800 text-white font-bold rounded-lg text-xs shadow-md flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <span>Simpan &amp; Tutup</span>
+              <ArrowRight className="w-4 h-4 shrink-0" />
+            </button>
+          </div>
         </div>
       </div>
     </div>

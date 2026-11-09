@@ -660,7 +660,7 @@ export function formatPoleCalloutLines(node: SurveyPoleNode): string[] {
     });
 }
 
-function getRomanSectionForPackage(
+export function getRomanSectionForPackage(
   code: string,
   category: string
 ): RabRomanSection {
@@ -1065,8 +1065,9 @@ export function generateRabItemsFromSurvey(
     packageGroupsMap.forEach((grp) => {
       if (grp.section !== sec.code) return;
 
+      const headerId = `rab-pkg-header-${sec.code}-${grp.code}`;
       generatedItems.push({
-        id: `rab-pkg-header-${sec.code}-${grp.code}`,
+        id: headerId,
         section: sec.code,
         uraian: grp.code,
         gol: 'HDW',
@@ -1104,6 +1105,7 @@ export function generateRabItemsFromSurvey(
           khsId,
           itemNo: compItemNo++,
           parentPackageCode: grp.code,
+          parentHeaderId: headerId,
           unitQtyPerPackage,
           sourceInfo: `${grp.code} (${grp.totalPkgQty} Unit)`,
         });
@@ -1134,7 +1136,7 @@ export function updateRabPackageHeaderVolume(
     headerItem.parentPackageCode ||
     headerItem.uraian ||
     ''
-  ).toUpperCase();
+  ).trim().toUpperCase();
   const pkgDef = CONSTRUCTION_PACKAGES_CATALOG.find(
     (p) => p.code.toUpperCase() === pkgCode
   );
@@ -1149,12 +1151,13 @@ export function updateRabPackageHeaderVolume(
       };
     }
 
-    if (
+    const isChild =
       !row.isPackageHeader &&
-      row.parentPackageCode &&
-      row.parentPackageCode.toUpperCase() === pkgCode &&
-      row.section === headerItem.section
-    ) {
+      (row.parentHeaderId === headerId ||
+        (row.parentPackageCode &&
+          row.parentPackageCode.trim().toUpperCase() === pkgCode));
+
+    if (isChild) {
       let baseUnitQty = row.unitQtyPerPackage;
       if (baseUnitQty === undefined || baseUnitQty <= 0) {
         const matchedComp = pkgDef?.components.find((comp) => {
@@ -1171,10 +1174,13 @@ export function updateRabPackageHeaderVolume(
         }
       }
 
+      const nextVol = Math.round(baseUnitQty * nextPkgVol * 100) / 100;
       return {
         ...row,
+        parentHeaderId: headerId,
+        parentPackageCode: row.parentPackageCode || pkgCode,
         unitQtyPerPackage: baseUnitQty,
-        volume: Math.round(baseUnitQty * nextPkgVol * 100) / 100,
+        volume: nextVol,
       };
     }
 

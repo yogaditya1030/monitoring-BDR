@@ -4,6 +4,14 @@ import path from 'path';
 
 const PORT = Number(process.env.PORT) || 3000;
 
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason);
+});
+
 async function getGeminiClient() {
   const { GoogleGenAI } = await import('@google/genai');
   return new GoogleGenAI({
@@ -88,6 +96,7 @@ ${dataContext}`;
       res.json({
         reply: response.text || 'Laporan berhasil disusun.',
         model: selectedModel,
+        modelUsed: selectedModel,
       });
     } catch (error: unknown) {
       console.error('Gemini API Chat Error:', error);
@@ -102,20 +111,18 @@ ${dataContext}`;
   });
 
   if (process.env.NODE_ENV !== 'production') {
-    const vitePromise = import('vite').then(({ createServer }) =>
-      createServer({
-        server: { middlewareMode: true },
-        appType: 'spa',
-      })
-    );
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR !== 'true',
+        watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      },
+      appType: 'spa',
+    });
 
-    app.use(async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const vite = await vitePromise;
-        vite.middlewares(req, res, next);
-      } catch (err) {
-        next(err);
-      }
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      vite.middlewares(req, res, next);
     });
   } else {
     const distPath = path.resolve(import.meta.dirname, 'dist');
@@ -125,11 +132,18 @@ ${dataContext}`;
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
     console.log(`  ➜  Local:   http://localhost:${PORT}/`);
   });
+
+  server.on('error', (err) => {
+    console.error('Server error:', err);
+  });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('Failed to start server:', err);
+});
+
 

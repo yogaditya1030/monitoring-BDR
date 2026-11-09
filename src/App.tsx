@@ -167,12 +167,11 @@ export default function App() {
   // Handle record updates from Department Workflow
   const handleUpdateRecord = async (updatedRecord: PermohonanItem) => {
     setRecords((prev) => prev.map((r) => (r.id === updatedRecord.id ? updatedRecord : r)));
-    showToast(`Data permohonan "${updatedRecord.projectName}" berhasil diperbarui.`);
+    showToast(`Data permohonan "${updatedRecord.projectName}" (Gambar & RAB) berhasil disimpan.`);
 
-    // If detail modal is open for this item, keep it updated
-    if (selectedRecordForDetail?.id === updatedRecord.id) {
-      setSelectedRecordForDetail(updatedRecord);
-    }
+    // Keep open modals synchronized with the latest saved record
+    setSelectedRecordForDetail((prev) => (prev?.id === updatedRecord.id ? updatedRecord : prev));
+    setSelectedRecordForWorkflow((prev) => (prev?.id === updatedRecord.id ? updatedRecord : prev));
 
     // Auto-sync full list if connected
     if (sheetsState.autoSync && sheetsState.isConnected && sheetsState.spreadsheetId) {
@@ -302,6 +301,7 @@ export default function App() {
           isOpen={!!selectedRecordForDetail}
           onClose={() => setSelectedRecordForDetail(null)}
           onOpenWorkflowAction={(item) => setSelectedRecordForWorkflow(item)}
+          onSave={handleUpdateRecord}
         />
       )}
 

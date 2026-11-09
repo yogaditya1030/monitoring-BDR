@@ -247,6 +247,7 @@ export interface RabLineItem {
   sourceInfo?: string; // e.g. 'Otomatis dari 5 Tiang Rencana'
   isPackageHeader?: boolean; // Baris "+" judul paket konstruksi (misal: "+ | MJ6-T | | Unit | 1") sesuai Contoh Format RAB
   parentPackageCode?: string; // Kode konstruksi induk untuk penomoran detail material 1..N di bawahnya
+  parentHeaderId?: string; // ID baris header paket konstruksi induk
   unitQtyPerPackage?: number; // Volume dasar per 1 unit paket konstruksi agar saat jumlah set utama diubah (1 -> 3) detail material otomatis dikalikan
   itemNo?: number; // Nomor urut lokal (1, 2, 3...) di bawah paket konstruksi atau seksi
 }
@@ -275,6 +276,12 @@ export interface SurveyRabDesign {
   ppnPercent: number; // 10 or 11
   includePembetonanTiang: boolean;
   transportasiRit: number;
+  legendPos?: { x: number; y: number };
+  mapBackgroundMode?: 'osm' | 'voyager' | 'satellite' | 'off';
+  mapBackgroundOpacity?: number;
+  mapZoomOffset?: number;
+  customCalloutOffsets?: Record<string, { dx: number; dy: number }>;
+  suratPermohonanPages?: string[];
   updatedAt: string;
 }
 

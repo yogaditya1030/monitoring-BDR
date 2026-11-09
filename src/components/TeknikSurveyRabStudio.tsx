@@ -30,6 +30,7 @@ import {
   calculateRabRowBreakdown,
   calculateRabSummary,
   groupRabItemsByRomanSection,
+  getRomanSectionForPackage,
   computeEtiketCalloutLayout,
   getConstructionAssignmentBreakdown,
   getPoleKhsMaterialBreakdown,
@@ -75,6 +76,7 @@ import {
   GripHorizontal,
   Move,
   Upload,
+  X,
 } from 'lucide-react';
 
 export interface TeknikSurveyRabStudioProps {
@@ -85,6 +87,7 @@ export interface TeknikSurveyRabStudioProps {
   nomorGardu?: string;
   nomorTiang: string;
   initialDesign?: SurveyRabDesign;
+  defaultViewTab?: 'map' | 'etiket' | 'rab' | 'pdf3hal';
   onAutoSyncDesign?: (
     design: SurveyRabDesign,
     grandTotalRab: number
@@ -143,12 +146,19 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   nomorGardu = '',
   nomorTiang,
   initialDesign,
+  defaultViewTab,
   onAutoSyncDesign,
   onApplyRabDesign,
   onDirectSave,
   readOnly = false,
 }) => {
-  const [viewTab, setViewTab] = useState<StudioSubTab>('map');
+  const [viewTab, setViewTab] = useState<StudioSubTab>(defaultViewTab || 'map');
+
+  useEffect(() => {
+    if (defaultViewTab) {
+      setViewTab(defaultViewTab);
+    }
+  }, [defaultViewTab]);
 
   // Nodes & Spans State (starts empty unless initialDesign has nodes)
   const [nodes, setNodes] = useState<SurveyPoleNode[]>(
@@ -160,7 +170,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   const [undoStack, setUndoStack] = useState<HistorySnapshot[]>([]);
   const [customCalloutOffsets, setCustomCalloutOffsets] = useState<
     Record<string, { dx: number; dy: number }>
-  >({});
+  >(() => initialDesign?.customCalloutOffsets || {});
 
   // RAB Settings & Items (PPN ditetapkan 11%)
   const [ppnPercent, setPpnPercent] = useState<number>(
@@ -191,7 +201,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   const [judulGambar, setJudulGambar] = useState<string>(
     initialDesign?.judulGambar ||
       item.keteranganPekerjaan ||
-      `${item.transaksi} - ${item.kontakPerson}`
+      `${item.transaksi} - ${item.projectName || item.kontakPerson}`
   );
   const [lokasiPekerjaan, setLokasiPekerjaan] = useState<string>(
     initialDesign?.lokasiPekerjaan ||
@@ -221,7 +231,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   const [selectedStatusJaringan, setSelectedStatusJaringan] = useState<
     'RENCANA' | 'EKSISTING'
   >('RENCANA');
-  const [autoConnectCable, setAutoConnectCable] = useState<boolean>(true);
+  const [autoConnectCable, setAutoConnectCable] = useState<boolean>(false);
   const [cableStartNodeId, setCableStartNodeId] = useState<string | null>(
     null
   );
@@ -243,7 +253,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<
     ConstructionCategory | 'ALL'
   >('ALL');
-  const [selectedPkgCode, setSelectedPkgCode] = useState<string>('C9-200');
+  const [selectedPkgCode, setSelectedPkgCode] = useState<string>('MJ6-T');
   const [newAssignmentAction, setNewAssignmentAction] =
     useState<NonNullable<SurveyPoleConstructionAssignment['actionType']>>(
       'PASANG'
@@ -253,6 +263,16 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     number | null
   >(null);
 
+  // Modal Tambah Item / Paket / Jasa Pembongkaran ke RAB
+  const [showAddRabModal, setShowAddRabModal] = useState<boolean>(false);
+  const [addModalMode, setAddModalMode] = useState<'PACKAGE' | 'MATERIAL_BONGKAR'>('PACKAGE');
+  const [addModalSearch, setAddModalSearch] = useState<string>('');
+  const [addModalCategory, setAddModalCategory] = useState<string>('ALL');
+  const [addModalQty, setAddModalQty] = useState<number>(1);
+  const [addModalSelectedPkgCode, setAddModalSelectedPkgCode] = useState<string>('MJ6-T');
+  const [addModalSelectedKhsId, setAddModalSelectedKhsId] = useState<string>('JASA_BONGKAR_JTR_J6');
+  const [addModalSection, setAddModalSection] = useState<RabRomanSection>('XV');
+
   // RAB Custom Row State
   const khsCatalogList = useMemo(() => Object.values(KHS_MASTER_CATALOG), []);
   const [newRowSection, setNewRowSection] = useState<RabRomanSection>('III');
@@ -261,45 +281,61 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   );
   const [newRowVol, setNewRowVol] = useState<number>(1);
   const [statusToast, setStatusToast] = useState<string | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(() =>
+    initialDesign?.updatedAt
+      ? new Date(initialDesign.updatedAt).toLocaleTimeString('id-ID')
+      : null
+  );
 
-  // Map Background State for Etiket SVG
+  // Map Background State for Etiket SVG (Defaults to Real Maps OSM)
   const [mapBackgroundMode, setMapBackgroundMode] = useState<
     'osm' | 'voyager' | 'satellite' | 'off'
-  >('osm');
-  const [mapBackgroundOpacity, setMapBackgroundOpacity] = useState<number>(0.8);
-  const [mapZoomOffset, setMapZoomOffset] = useState<number>(0);
+  >(() => initialDesign?.mapBackgroundMode || 'osm');
+  const [mapBackgroundOpacity, setMapBackgroundOpacity] = useState<number>(
+    () => initialDesign?.mapBackgroundOpacity ?? 0.92
+  );
+  const [mapZoomOffset, setMapZoomOffset] = useState<number>(
+    () => initialDesign?.mapZoomOffset ?? 0
+  );
 
-  // Draggable Legend State in Etiket SVG
-  const [legendPos, setLegendPos] = useState<{ x: number; y: number }>({
-    x: 26,
-    y: 26,
-  });
+  // Draggable Legend & Callout State in Etiket SVG
+  const [legendPos, setLegendPos] = useState<{ x: number; y: number }>(
+    () => initialDesign?.legendPos || { x: 690, y: 16 }
+  );
   const [isDraggingLegend, setIsDraggingLegend] = useState(false);
   const legendDragStart = useRef<{
     mouseX: number;
     mouseY: number;
     startX: number;
     startY: number;
-  }>({ mouseX: 0, mouseY: 0, startX: 26, startY: 26 });
+  }>({ mouseX: 0, mouseY: 0, startX: 690, startY: 16 });
+  const [draggingCalloutNodeId, setDraggingCalloutNodeId] = useState<string | null>(null);
+  const calloutDragStart = useRef<{
+    mouseX: number;
+    mouseY: number;
+    startDx: number;
+    startDy: number;
+  }>({ mouseX: 0, mouseY: 0, startDx: 0, startDy: 0 });
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   // Multi-page Surat Permohonan State
-  const initialSuratPages = useMemo(() => {
-    if (item.suratPermohonanPages && item.suratPermohonanPages.length > 0) {
-      return item.suratPermohonanPages;
+  const computeInitialSuratPages = (rec: PermohonanItem, des?: SurveyRabDesign): string[] => {
+    if (des?.suratPermohonanPages && des.suratPermohonanPages.length > 0) {
+      return des.suratPermohonanPages;
     }
-    if (item.suratPermohonanDataUrl && item.suratPermohonanDataUrl.trim() !== '') {
-      return [item.suratPermohonanDataUrl];
+    if (rec.suratPermohonanPages && rec.suratPermohonanPages.length > 0) {
+      return rec.suratPermohonanPages;
     }
-    return [] as string[];
-  }, [item.id, item.suratPermohonanDataUrl, item.suratPermohonanPages]);
+    if (rec.suratPermohonanDataUrl && rec.suratPermohonanDataUrl.trim() !== '') {
+      return [rec.suratPermohonanDataUrl];
+    }
+    return ['FORMAL_PAGE_1'];
+  };
 
-  const [attachedSuratPages, setAttachedSuratPages] = useState<string[]>(initialSuratPages);
+  const [attachedSuratPages, setAttachedSuratPages] = useState<string[]>(() =>
+    computeInitialSuratPages(item, initialDesign)
+  );
   const [failedImageIndices, setFailedImageIndices] = useState<Record<number, boolean>>({});
-
-  useEffect(() => {
-    setAttachedSuratPages(initialSuratPages);
-  }, [initialSuratPages]);
 
   const handleUploadSuratPage = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -309,8 +345,11 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       reader.onload = (ev) => {
         const result = ev.target?.result as string;
         if (result) {
-          setAttachedSuratPages((prev) => [...prev, result]);
-          setStatusToast('Halaman surat permohonan berhasil ditambahkan ke bundel berkas!');
+          setAttachedSuratPages((prev) => {
+            // If only default single formal page exists and user uploads real scan, append or replace cleanly
+            return [...prev, result];
+          });
+          setStatusToast(`Halaman surat "${file.name}" berhasil ditambahkan ke bundel berkas!`);
           setTimeout(() => setStatusToast(null), 3500);
         }
       };
@@ -319,8 +358,35 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     e.target.value = '';
   };
 
+  const handleAddFormalSuratPage = () => {
+    setAttachedSuratPages((prev) => [
+      ...prev,
+      `FORMAL_PAGE_${prev.length + 1}`,
+    ]);
+    setStatusToast('Lembar halaman surat permohonan berhasil ditambahkan!');
+    setTimeout(() => setStatusToast(null), 3000);
+  };
+
+  const handleSetSuratPageCount = (targetCount: number) => {
+    const safeCount = Math.max(1, Math.min(10, targetCount));
+    setAttachedSuratPages((prev) => {
+      if (prev.length === safeCount) return prev;
+      if (prev.length > safeCount) {
+        return prev.slice(0, safeCount);
+      }
+      const next = [...prev];
+      while (next.length < safeCount) {
+        next.push(`FORMAL_PAGE_${next.length + 1}`);
+      }
+      return next;
+    });
+  };
+
   const handleRemoveSuratPage = (idx: number) => {
-    setAttachedSuratPages((prev) => prev.filter((_, i) => i !== idx));
+    setAttachedSuratPages((prev) => {
+      const filtered = prev.filter((_, i) => i !== idx);
+      return filtered.length > 0 ? filtered : ['FORMAL_PAGE_1'];
+    });
     setFailedImageIndices((prev) => {
       const copy = { ...prev };
       delete copy[idx];
@@ -328,27 +394,57 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     });
   };
 
-  // Synchronize when initialDesign updates from parent
+  // Synchronize ONLY when switching to a different record (item.id)
   useEffect(() => {
-    if (initialDesign && initialDesign.nodes && initialDesign.nodes.length > 0) {
-      setNodes(initialDesign.nodes);
-      setSpans(initialDesign.spans || []);
-      if (initialDesign.rabItems && initialDesign.rabItems.length > 0) {
-        setRabItems(initialDesign.rabItems);
-      }
-      if (initialDesign.ppnPercent) {
-        setPpnPercent(initialDesign.ppnPercent);
-      }
-      if (initialDesign.judulGambar) {
-        setJudulGambar(initialDesign.judulGambar);
-      }
-      if (initialDesign.lokasiPekerjaan) {
-        setLokasiPekerjaan(initialDesign.lokasiPekerjaan);
-      }
+    setNodes(initialDesign?.nodes || []);
+    setSpans(initialDesign?.spans || []);
+    if (initialDesign?.rabItems && initialDesign.rabItems.length > 0) {
+      setRabItems(initialDesign.rabItems);
+    } else if (initialDesign?.nodes && initialDesign.nodes.length > 0) {
+      setRabItems(
+        generateRabItemsFromSurvey({
+          nodes: initialDesign.nodes,
+          spans: initialDesign.spans || [],
+          includePembetonanTiang: initialDesign.includePembetonanTiang ?? true,
+          transportasiRit: initialDesign.transportasiRit ?? 1,
+        })
+      );
+    } else {
+      setRabItems([]);
     }
-  }, [item.id, initialDesign?.updatedAt]);
+    setPpnPercent(initialDesign?.ppnPercent ?? 11);
+    setIncludePembetonanTiang(initialDesign?.includePembetonanTiang ?? true);
+    setTransportasiRit(initialDesign?.transportasiRit ?? 1);
+    setJudulGambar(
+      initialDesign?.judulGambar ||
+        item.keteranganPekerjaan ||
+        `${item.transaksi} - ${item.projectName || item.kontakPerson}`
+    );
+    setLokasiPekerjaan(
+      initialDesign?.lokasiPekerjaan ||
+        item.alamat ||
+        'WILAYAH KERJA ULP BOROBUDUR'
+    );
+    setLegendPos(initialDesign?.legendPos || { x: 690, y: 16 });
+    setMapBackgroundMode(initialDesign?.mapBackgroundMode || 'osm');
+    setMapBackgroundOpacity(initialDesign?.mapBackgroundOpacity ?? 0.92);
+    setMapZoomOffset(initialDesign?.mapZoomOffset ?? 0);
+    setCustomCalloutOffsets(initialDesign?.customCalloutOffsets || {});
+    setAttachedSuratPages(computeInitialSuratPages(item, initialDesign));
+    setLastSavedAt(
+      initialDesign?.updatedAt
+        ? new Date(initialDesign.updatedAt).toLocaleTimeString('id-ID')
+        : null
+    );
+  }, [item.id]);
 
-  // Continuous auto-sync so parents (and localStorage) always have the latest SurveyRabDesign
+  // Keep a stable ref to onAutoSyncDesign so it never causes a re-render loop
+  const onAutoSyncRef = useRef(onAutoSyncDesign);
+  useEffect(() => {
+    onAutoSyncRef.current = onAutoSyncDesign;
+  }, [onAutoSyncDesign]);
+
+  // Continuous auto-sync so parents always have the latest SurveyRabDesign in memory
   useEffect(() => {
     if (nodes.length === 0 && spans.length === 0 && rabItems.length === 0) return;
     const summary = calculateRabSummary(rabItems, ppnPercent);
@@ -374,9 +470,15 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       ppnPercent,
       includePembetonanTiang,
       transportasiRit,
+      legendPos,
+      mapBackgroundMode,
+      mapBackgroundOpacity,
+      mapZoomOffset,
+      customCalloutOffsets,
+      suratPermohonanPages: attachedSuratPages,
       updatedAt: new Date().toISOString(),
     };
-    onAutoSyncDesign?.(design, summary.grandTotal);
+    onAutoSyncRef.current?.(design, summary.grandTotal);
   }, [
     nodes,
     spans,
@@ -390,7 +492,12 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     jenisAnggaran,
     nomorPrk,
     petugasSurvei,
-    onAutoSyncDesign,
+    legendPos,
+    mapBackgroundMode,
+    mapBackgroundOpacity,
+    mapZoomOffset,
+    customCalloutOffsets,
+    attachedSuratPages,
   ]);
 
   // Refs for Leaflet Map
@@ -536,6 +643,76 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     });
   }, [constructionSearch, selectedCategory]);
 
+  // Filtered packages for Add RAB Item Modal
+  const filteredModalPackages = useMemo(() => {
+    const q = addModalSearch.trim().toLowerCase();
+    return CONSTRUCTION_PACKAGES_CATALOG.filter((pkg) => {
+      const catOk =
+        addModalCategory === 'ALL' ||
+        pkg.category === addModalCategory ||
+        (addModalCategory === 'BONGKAR' &&
+          (pkg.category === 'BONGKAR' || pkg.code.startsWith('BKR')));
+      if (!catOk) return false;
+      if (!q) return true;
+      return (
+        pkg.code.toLowerCase().includes(q) ||
+        pkg.name.toLowerCase().includes(q) ||
+        pkg.description.toLowerCase().includes(q) ||
+        pkg.components.some((c) => {
+          const khs = KHS_MASTER_CATALOG[c.khsId];
+          return (
+            c.khsId.toLowerCase().includes(q) ||
+            khs?.uraian.toLowerCase().includes(q)
+          );
+        })
+      );
+    });
+  }, [addModalSearch, addModalCategory]);
+
+  // Filtered KHS catalog (especially Jasa Pembongkaran Seksi XV) for Add RAB Item Modal
+  const filteredModalKhs = useMemo(() => {
+    const q = addModalSearch.trim().toLowerCase();
+    const allKhs = Object.values(KHS_MASTER_CATALOG);
+    return allKhs.filter((k) => {
+      let matchesCat = true;
+      if (addModalCategory === 'BONGKAR') {
+        matchesCat =
+          k.section === 'XV' ||
+          k.section === 'XIV' ||
+          k.id.startsWith('JASA_BONGKAR') ||
+          k.uraian.toLowerCase().includes('bongkar');
+      } else if (addModalCategory === 'TIANG') {
+        matchesCat = k.section === 'I' || k.id.includes('TIANG');
+      } else if (addModalCategory === 'JTM') {
+        matchesCat = k.section === 'II' || k.section === 'VI' || k.id.includes('JTM');
+      } else if (addModalCategory === 'GARDU') {
+        matchesCat = k.section === 'III' || k.id.includes('TRAFO') || k.id.includes('GARDU');
+      } else if (addModalCategory === 'SWITCHING') {
+        matchesCat = k.section === 'IV' || k.id.includes('LBS') || k.id.includes('ABSW');
+      } else if (addModalCategory === 'SKUTM') {
+        matchesCat = k.section === 'V' || k.section === 'VII';
+      } else if (addModalCategory === 'SKUR') {
+        matchesCat = k.section === 'VIII' || k.id.includes('SKUR') || k.id.includes('GUY');
+      } else if (addModalCategory === 'GROUNDING') {
+        matchesCat = k.section === 'IX' || k.id.includes('GROUNDING') || k.id.includes('ARRESTER');
+      } else if (addModalCategory === 'JTR') {
+        matchesCat = k.section === 'X' || k.section === 'XI' || k.id.includes('JTR');
+      } else if (addModalCategory === 'SKUTR') {
+        matchesCat = k.section === 'XI' || k.id.includes('LVTC') || k.id.includes('SKUTR');
+      } else if (addModalCategory === 'SR') {
+        matchesCat = k.id.includes('SR') || k.id.includes('METER') || k.id.includes('MCB') || k.id.includes('APP');
+      }
+      if (!matchesCat) return false;
+      if (!q) return true;
+      return (
+        k.id.toLowerCase().includes(q) ||
+        k.uraian.toLowerCase().includes(q) ||
+        k.section.toLowerCase().includes(q) ||
+        k.gol.toLowerCase().includes(q)
+      );
+    });
+  }, [addModalSearch, addModalCategory]);
+
   useEffect(() => {
     if (
       filteredCatalog.length > 0 &&
@@ -656,18 +833,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         ? `SA4-20/${idx}`
         : `TE-${String(idx).padStart(2, '0')}`;
 
-      const defaultConstructions: SurveyPoleConstructionAssignment[] =
-        kind === 'TIANG_RENCANA'
-          ? [
-              { code: 'C9-200', qty: 1, actionType: 'PASANG' },
-              { code: 'SJ5', qty: 1, actionType: 'PASANG' },
-            ]
-          : kind === 'GARDU_RENCANA'
-          ? [
-              { code: 'DB01', qty: 1, actionType: 'PASANG' },
-              { code: 'C12-350', qty: 2, actionType: 'PASANG' },
-            ]
-          : [{ code: 'SJ5', qty: 1, actionType: 'PASANG' }];
+      // Tiang baru dimasukkan ke canvas dalam keadaan kosong tanpa konstruksi dan kabel bawaan
+      const defaultConstructions: SurveyPoleConstructionAssignment[] = [];
 
       const newNode: SurveyPoleNode = {
         id: `node-${Date.now()}-${idx}`,
@@ -679,45 +846,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       };
 
       const nextNodes = [...st.nodes, newNode];
-      let nextSpans = [...st.spans];
-
-      if (st.autoConnectCable && st.nodes.length > 0) {
-        const prevNode =
-          st.nodes.find((n) => n.id === st.selectedNodeId) ||
-          st.nodes[st.nodes.length - 1];
-        if (prevNode) {
-          const dist = calculateGeodesicDistanceMeters(
-            prevNode.lat,
-            prevNode.lng,
-            newNode.lat,
-            newNode.lng
-          );
-          const jenisJaringan = inferNetworkCategoryFromConductor(
-            st.selectedConductorType
-          );
-          const newCable: SpanCableItem = {
-            id: `cab-${Date.now()}`,
-            statusJaringan: st.selectedStatusJaringan,
-            jenisJaringan,
-            conductorType: st.selectedConductorType,
-            phaseCount: st.selectedPhaseCount,
-            circuitCount: 1,
-            actionType: 'PASANG',
-          };
-          const newSpan: SurveySpanEdge = {
-            id: `span-${Date.now()}`,
-            fromNodeId: prevNode.id,
-            toNodeId: newNode.id,
-            statusJaringan: st.selectedStatusJaringan,
-            jenisJaringan,
-            conductorType: st.selectedConductorType,
-            phaseCount: st.selectedPhaseCount,
-            distanceMeters: Math.max(5, dist),
-            cables: [newCable],
-          };
-          nextSpans = [...nextSpans, newSpan];
-        }
-      }
+      const nextSpans = [...st.spans];
 
       commitGraphUpdate(nextNodes, nextSpans, true);
       setSelectedNodeId(newNode.id);
@@ -1253,41 +1382,11 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       kind: polePlacementKind,
       lat: Number(baseLat.toFixed(6)),
       lng: Number(baseLng.toFixed(6)),
-      constructions: [
-        { code: 'C9-200', qty: 1, actionType: 'PASANG' },
-        { code: 'SJ5', qty: 1, actionType: 'PASANG' },
-        { code: 'CM2-12', qty: 1, actionType: 'PASANG' },
-      ],
+      constructions: [], // Tiang baru kosong tanpa konstruksi dan kabel
     };
 
     const nextNodes = [...nodes, newNode];
-    let nextSpans = [...spans];
-
-    if (refNode && autoConnectCable) {
-      const jenisJaringan = inferNetworkCategoryFromConductor(
-        selectedConductorType
-      );
-      const newCable: SpanCableItem = {
-        id: `cab-${Date.now()}`,
-        statusJaringan: selectedStatusJaringan,
-        jenisJaringan,
-        conductorType: selectedConductorType,
-        phaseCount: selectedPhaseCount,
-        circuitCount: 1,
-        actionType: 'PASANG',
-      };
-      nextSpans.push({
-        id: `span-${Date.now()}`,
-        fromNodeId: refNode.id,
-        toNodeId: newNode.id,
-        statusJaringan: selectedStatusJaringan,
-        jenisJaringan,
-        conductorType: selectedConductorType,
-        phaseCount: selectedPhaseCount,
-        distanceMeters: 40,
-        cables: [newCable],
-      });
-    }
+    const nextSpans = [...spans];
 
     commitGraphUpdate(nextNodes, nextSpans, true);
     setSelectedNodeId(newNode.id);
@@ -1329,10 +1428,11 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     setCableStartNodeId(null);
   };
 
-  // Generate & Apply RAB to Parent Modal
-  const handleGenerateAndApplyRab = () => {
-    const generated =
-      nodes.length > 0 || spans.length > 0
+  // Generate & Save RAB + Gambar Sketsa to Parent Modal & App State (without closing modal)
+  const handleGenerateAndApplyRab = (forceRegenerateFromMap = false) => {
+    const finalRabItems =
+      (forceRegenerateFromMap || rabItems.length === 0) &&
+      (nodes.length > 0 || spans.length > 0)
         ? generateRabItemsFromSurvey({
             nodes,
             spans,
@@ -1341,8 +1441,11 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
           })
         : rabItems;
 
-    setRabItems(generated);
-    const summary = calculateRabSummary(generated, ppnPercent);
+    if (finalRabItems !== rabItems) {
+      setRabItems(finalRabItems);
+    }
+    const summary = calculateRabSummary(finalRabItems, ppnPercent);
+    const nowIso = new Date().toISOString();
 
     const design: SurveyRabDesign = {
       judulGambar,
@@ -1362,11 +1465,17 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       disetujuiOleh: 'MANAJER',
       nodes,
       spans,
-      rabItems: generated,
+      rabItems: finalRabItems,
       ppnPercent,
       includePembetonanTiang,
       transportasiRit,
-      updatedAt: new Date().toISOString(),
+      legendPos,
+      mapBackgroundMode,
+      mapBackgroundOpacity,
+      mapZoomOffset,
+      customCalloutOffsets,
+      suratPermohonanPages: attachedSuratPages,
+      updatedAt: nowIso,
     };
 
     const summaryNotes = `Survei GIS: ${plannedNodeCount} Tiang Rencana, ${existingNodeCount} Eksisting, Tarikan ${totalPlannedMeters}m. Total RAB (+PPN ${ppnPercent}%): Rp ${summary.grandTotal.toLocaleString(
@@ -1375,14 +1484,15 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
     onApplyRabDesign(design, summary.grandTotal, summaryNotes);
     onDirectSave?.(design, summary.grandTotal, summaryNotes);
+    setLastSavedAt(new Date(nowIso).toLocaleTimeString('id-ID'));
     setStatusToast(
-      `✓ RAB Otomatis (${
-        generated.length
+      `✓ Gambar Sketsa (${nodes.length} Titik) & RAB (${
+        finalRabItems.length
       } baris, Rp ${summary.grandTotal.toLocaleString(
         'id-ID'
-      )}) & Gambar Sketsa berhasil disimpan ke sistem permohonan!`
+      )}) berhasil disimpan & tetap tampil di aplikasi!`
     );
-    setTimeout(() => setStatusToast(null), 4500);
+    setTimeout(() => setStatusToast(null), 5000);
   };
 
   // Node Construction Inspector Handlers
@@ -1451,6 +1561,139 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         : n
     );
     commitGraphUpdate(nextNodes, spans, true);
+  };
+
+  // Ubah kuantitas material komponen individual per set pada titik konstruksi di canvas
+  const handleUpdateComponentQtyOnNode = (
+    assignmentIdx: number,
+    khsId: string,
+    newUnitQty: number
+  ) => {
+    if (!selectedNode) return;
+    const nextNodes = nodes.map((n) => {
+      if (n.id !== selectedNode.id) return n;
+      const nextConstructions = n.constructions.map((c, i) => {
+        if (i !== assignmentIdx) return c;
+        const nextCustom = { ...(c.customComponentQty || {}) };
+        if (newUnitQty <= 0) {
+          delete nextCustom[khsId];
+        } else {
+          nextCustom[khsId] = newUnitQty;
+        }
+        return { ...c, customComponentQty: nextCustom };
+      });
+      return { ...n, constructions: nextConstructions };
+    });
+    commitGraphUpdate(nextNodes, spans, true);
+  };
+
+  // Toggle aktif / non-aktif komponen material individual pada titik konstruksi di canvas
+  const handleToggleComponentOnNode = (
+    assignmentIdx: number,
+    khsId: string
+  ) => {
+    if (!selectedNode) return;
+    const nextNodes = nodes.map((n) => {
+      if (n.id !== selectedNode.id) return n;
+      const nextConstructions = n.constructions.map((c, i) => {
+        if (i !== assignmentIdx) return c;
+        const prevDisabled = new Set(c.disabledKhsIds || []);
+        if (prevDisabled.has(khsId)) {
+          prevDisabled.delete(khsId);
+        } else {
+          prevDisabled.add(khsId);
+        }
+        return { ...c, disabledKhsIds: Array.from(prevDisabled) };
+      });
+      return { ...n, constructions: nextConstructions };
+    });
+    commitGraphUpdate(nextNodes, spans, true);
+  };
+
+  // Tambah Paket Konstruksi Standar Langsung ke Tabel RAB (beserta seluruh rincian material dikalikan)
+  const handleAddPackageToRab = (pkgCode: string, qty: number) => {
+    const pkg = CONSTRUCTION_PACKAGES_CATALOG.find(
+      (p) => p.code.toUpperCase() === pkgCode.toUpperCase()
+    );
+    if (!pkg) return;
+    const safeQty = Math.max(1, Number(qty) || 1);
+    const targetSec = getRomanSectionForPackage(pkg.code, pkg.category);
+    const headerId = `custom-pkg-header-${targetSec}-${pkg.code}-${Date.now()}`;
+
+    const headerItem: RabLineItem = {
+      id: headerId,
+      section: targetSec,
+      uraian: pkg.code,
+      gol: 'HDW',
+      satuan: 'Unit',
+      volume: safeQty,
+      hargaSatuan: 0,
+      isPackageHeader: true,
+      parentPackageCode: pkg.code,
+      sourceInfo: `Tambah Manual (${safeQty} Unit)`,
+    };
+
+    const childItems: RabLineItem[] = pkg.components.map((comp, idx) => {
+      const khs = KHS_MASTER_CATALOG[comp.khsId];
+      const vol = Math.round(comp.qty * safeQty * 100) / 100;
+      return {
+        id: `custom-pkg-item-${targetSec}-${pkg.code}-${comp.khsId}-${Date.now()}-${idx}`,
+        section: targetSec,
+        uraian: khs?.uraian || comp.khsId,
+        gol: khs?.gol || 'HDW',
+        satuan: khs?.satuan || 'Bh',
+        volume: vol,
+        hargaSatuan: khs?.hargaSatuan || 0,
+        khsId: comp.khsId,
+        itemNo: idx + 1,
+        parentPackageCode: pkg.code,
+        parentHeaderId: headerId,
+        unitQtyPerPackage: comp.qty,
+        sourceInfo: `${pkg.code} (${safeQty} Unit)`,
+      };
+    });
+
+    setRabItems((prev) => [...prev, headerItem, ...childItems]);
+    setStatusToast(
+      `✓ Paket ${pkg.code} (${safeQty} Set) beserta ${childItems.length} detail material berhasil ditambahkan ke RAB!`
+    );
+    setTimeout(() => setStatusToast(null), 4000);
+    setShowAddRabModal(false);
+  };
+
+  // Tambah Material Satuan atau Jasa Pembongkaran Langsung ke Tabel RAB (Seksi XV atau lainnya)
+  const handleAddKhsItemToRab = (
+    khsId: string,
+    volume: number,
+    targetSectionOverride?: RabRomanSection
+  ) => {
+    const khs = KHS_MASTER_CATALOG[khsId];
+    if (!khs) return;
+    const safeVol = Math.max(0.1, Number(volume) || 1);
+    const effectiveSection: RabRomanSection =
+      targetSectionOverride ||
+      khs.section ||
+      (khsId.startsWith('JASA_BONGKAR') ? 'XV' : 'X');
+
+    const newItem: RabLineItem = {
+      id: `custom-khs-${khs.id}-${Date.now()}`,
+      section: effectiveSection,
+      uraian: khs.uraian,
+      gol: khs.gol,
+      satuan: khs.satuan,
+      volume: safeVol,
+      hargaSatuan: khs.hargaSatuan,
+      khsId: khs.id,
+      sourceInfo:
+        effectiveSection === 'XV' ? 'Pekerjaan Pembongkaran' : 'Item Tambahan',
+    };
+
+    setRabItems((prev) => [...prev, newItem]);
+    setStatusToast(
+      `✓ ${khs.uraian} (${safeVol} ${khs.satuan}) berhasil ditambahkan ke Seksi ${effectiveSection}!`
+    );
+    setTimeout(() => setStatusToast(null), 4000);
+    setShowAddRabModal(false);
   };
 
   // Project lat/lng to SVG canvas coordinates for Tab 2 & Tab 4 Etiket
@@ -1595,8 +1838,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         const pFrom = projectedNodes.find((p) => p.id === sp.fromNodeId);
         const pTo = projectedNodes.find((p) => p.id === sp.toNodeId);
         if (!pFrom || !pTo) return null;
-        const isBkr = isSpanMarkedBongkar(sp);
-        const badgeText = `${sp.distanceMeters}m${isBkr ? ' (BKR)' : ''}`;
+        // Legenda/label pada kabel hanya menuliskan panjangnya saja
+        const badgeText = `${sp.distanceMeters}m`;
         return {
           id: sp.id,
           x1: pFrom.x,
@@ -1604,12 +1847,48 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
           x2: pTo.x,
           y2: pTo.y,
           badgeText,
-          badgeW: Math.max(34, badgeText.length * 6.5),
+          badgeW: Math.max(30, badgeText.length * 6.5),
           badgeH: 15,
         };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
   }, [spans, projectedNodes]);
+
+  // Calculate cable lengths for the Legend box (tuliskan saja panjangnya)
+  const cableLegendLengths = useMemo(() => {
+    let jtmMeters = 0;
+    let jtrMeters = 0;
+    let jtrPlannedMeters = 0;
+    let srMeters = 0;
+    let totalMeters = 0;
+    let plannedMeters = 0;
+    spans.forEach((sp) => {
+      const dist = Number(sp.distanceMeters) || 0;
+      totalMeters += dist;
+      const cables = getEffectiveSpanCables(sp);
+      cables.forEach((c) => {
+        const cDist = dist * (c.circuitCount || 1);
+        if (c.statusJaringan === 'RENCANA') {
+          plannedMeters += cDist;
+        }
+        if (c.jenisJaringan === 'JTM') jtmMeters += cDist;
+        else if (c.jenisJaringan === 'JTR') {
+          jtrMeters += cDist;
+          if (c.statusJaringan === 'RENCANA') jtrPlannedMeters += cDist;
+        } else if (c.jenisJaringan === 'SR') srMeters += cDist;
+      });
+    });
+    const spanDistances = spans.map((s) => `${s.distanceMeters}m`).join(', ');
+    return {
+      jtmMeters,
+      jtrMeters,
+      jtrPlannedMeters,
+      srMeters,
+      totalMeters,
+      plannedMeters: plannedMeters > 0 ? plannedMeters : totalMeters,
+      spanDistances: spanDistances || '0m',
+    };
+  }, [spans]);
 
   const etiketLayout = useMemo(
     () =>
@@ -1618,14 +1897,15 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         spans: projectedSpans,
         defaultMainRoadCenter: { x: etiketWidth / 2, y: etiketHeight / 2 + 44 },
         defaultSimpangRoadCenter: { x: 185, y: etiketHeight - 40 },
-        showRoadSketch: false, // Replaced with real maps
+        showRoadSketch: false, // Uses real maps background
       }),
     [projectedNodes, projectedSpans]
   );
 
-  // Drag handlers for the Draggable Legend in SVG
-  const handleLegendMouseDown = (e: React.MouseEvent) => {
+  // Pointer-event drag handlers for the Draggable Legend & Callouts in SVG
+  const handleLegendPointerDown = (e: React.PointerEvent<SVGGElement>) => {
     e.stopPropagation();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
     legendDragStart.current = {
       mouseX: e.clientX,
       mouseY: e.clientY,
@@ -1635,41 +1915,74 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     setIsDraggingLegend(true);
   };
 
-  const handleSvgMouseMove = (e: React.MouseEvent) => {
-    if (!isDraggingLegend || !svgRef.current) return;
-    const rect = svgRef.current.getBoundingClientRect();
-    const scaleX = etiketWidth / rect.width;
-    const scaleY = etiketHeight / rect.height;
-    const dx = (e.clientX - legendDragStart.current.mouseX) * scaleX;
-    const dy = (e.clientY - legendDragStart.current.mouseY) * scaleY;
-    const nextX = Math.max(
-      10,
-      Math.min(etiketWidth - 215, legendDragStart.current.startX + dx)
-    );
-    const nextY = Math.max(
-      10,
-      Math.min(etiketHeight - 165, legendDragStart.current.startY + dy)
-    );
-    setLegendPos({ x: Math.round(nextX), y: Math.round(nextY) });
+  const handleCalloutPointerDown = (
+    e: React.PointerEvent<SVGGElement>,
+    nodeId: string
+  ) => {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    const existing = customCalloutOffsets[nodeId] || { dx: 0, dy: 0 };
+    calloutDragStart.current = {
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      startDx: existing.dx,
+      startDy: existing.dy,
+    };
+    setDraggingCalloutNodeId(nodeId);
   };
 
-  const handleSvgMouseUp = () => {
+  const handleSvgPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!svgRef.current) return;
+    if (!isDraggingLegend && !draggingCalloutNodeId) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const scaleX = etiketWidth / (rect.width || 1);
+    const scaleY = etiketHeight / (rect.height || 1);
+
     if (isDraggingLegend) {
-      setIsDraggingLegend(false);
+      const dx = (e.clientX - legendDragStart.current.mouseX) * scaleX;
+      const dy = (e.clientY - legendDragStart.current.mouseY) * scaleY;
+      const nextX = Math.max(
+        6,
+        Math.min(etiketWidth - 220, legendDragStart.current.startX + dx)
+      );
+      const nextY = Math.max(
+        6,
+        Math.min(etiketHeight - 160, legendDragStart.current.startY + dy)
+      );
+      setLegendPos({ x: Math.round(nextX), y: Math.round(nextY) });
+    } else if (draggingCalloutNodeId) {
+      const dx = (e.clientX - calloutDragStart.current.mouseX) * scaleX;
+      const dy = (e.clientY - calloutDragStart.current.mouseY) * scaleY;
+      setCustomCalloutOffsets((prev) => ({
+        ...prev,
+        [draggingCalloutNodeId]: {
+          dx: Math.round(calloutDragStart.current.startDx + dx),
+          dy: Math.round(calloutDragStart.current.startDy + dy),
+        },
+      }));
     }
   };
 
-  // Render SVG Etiket Drawing (shared between Tab 2 and Tab 4 Page 2)
+  const handleSvgPointerUp = () => {
+    if (isDraggingLegend) {
+      setIsDraggingLegend(false);
+    }
+    if (draggingCalloutNodeId) {
+      setDraggingCalloutNodeId(null);
+    }
+  };
+
+  // Render SVG Etiket Drawing (shared between Tab 2 and Tab 4)
   const renderEtiketEngineeringSvg = () => {
     return (
       <div className="border-2 border-slate-900 bg-white text-slate-900 shadow-sm overflow-hidden relative">
         <svg
           ref={svgRef}
           viewBox={`0 0 ${etiketWidth} ${etiketHeight}`}
-          className="w-full h-auto block bg-white select-none"
-          onMouseMove={handleSvgMouseMove}
-          onMouseUp={handleSvgMouseUp}
-          onMouseLeave={handleSvgMouseUp}
+          className="w-full h-auto block bg-slate-100 select-none touch-none"
+          onPointerMove={handleSvgPointerMove}
+          onPointerUp={handleSvgPointerUp}
+          onPointerLeave={handleSvgPointerUp}
         >
           <defs>
             <pattern
@@ -1704,12 +2017,12 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             </g>
           )}
 
-          {/* Semi-transparent grid overlay so technical lines pop clearly */}
+          {/* Subtle grid overlay */}
           <rect
             width={etiketWidth}
             height={etiketHeight}
             fill="url(#pln-cad-grid)"
-            opacity={mapBackgroundMode !== 'off' ? 0.35 : 1}
+            opacity={mapBackgroundMode !== 'off' ? 0.15 : 1}
           />
 
           {/* Compass North Arrow (U) */}
@@ -1719,7 +2032,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               cy="0"
               r="20"
               fill="#ffffff"
-              fillOpacity="0.9"
+              fillOpacity="0.92"
               stroke="#0f172a"
               strokeWidth="1.5"
             />
@@ -1737,17 +2050,29 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
           </g>
 
           {projectedNodes.length === 0 && (
-            <text
-              x={etiketWidth / 2}
-              y={etiketHeight / 2}
-              textAnchor="middle"
-              fontSize="13"
-              fontWeight="700"
-              fill="#64748b"
-            >
-              Belum ada titik tiang pada Kanvas Peta GIS. Silakan tambahkan tiang
-              atau klik &quot;Muat Contoh SMP N 3 Pabelan&quot;.
-            </text>
+            <g>
+              <rect
+                x={etiketWidth / 2 - 260}
+                y={etiketHeight / 2 - 26}
+                width="520"
+                height="52"
+                rx="8"
+                fill="#ffffff"
+                fillOpacity="0.92"
+                stroke="#0f172a"
+                strokeWidth="1.2"
+              />
+              <text
+                x={etiketWidth / 2}
+                y={etiketHeight / 2 + 4}
+                textAnchor="middle"
+                fontSize="12"
+                fontWeight="800"
+                fill="#0f172a"
+              >
+                Peta Lokasi Survei ({tagingLokasi}) — Tambahkan tiang di Peta GIS atau Muat Contoh
+              </text>
+            </g>
           )}
 
           {/* Spans & Multi-Cables */}
@@ -1848,7 +2173,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                       fontWeight="800"
                       fill={spanBongkar ? '#dc2626' : '#0f172a'}
                     >
-                      {span.distanceMeters}m{spanBongkar ? ' (BKR)' : ''}
+                      {span.distanceMeters}m
                     </text>
                   </g>
                 )}
@@ -1856,7 +2181,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             );
           })}
 
-          {/* Callout Leader Lines & Non-Overlapping Callout Boxes */}
+          {/* Callout Leader Lines & Draggable Callout Boxes */}
           {etiketLayout.nodePlacements.map((cl) => {
             const pNode = projectedNodes.find((p) => p.id === cl.id);
             if (!pNode) return null;
@@ -1865,31 +2190,41 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               pNode.kind === 'GARDU_RENCANA' ||
               pNode.kind === 'TITIK_APP';
             const nodeBongkar = isNodeMarkedBongkar(pNode.node);
+            const customOffset = customCalloutOffsets[cl.id] || { dx: 0, dy: 0 };
+            const boxX = cl.boxX + customOffset.dx;
+            const boxY = cl.boxY + customOffset.dy;
+            const anchorX = cl.anchorX + customOffset.dx;
+            const anchorY = cl.anchorY + customOffset.dy;
 
             return (
-              <g key={`callout-${cl.id}`}>
+              <g
+                key={`callout-${cl.id}`}
+                onPointerDown={(ev) => handleCalloutPointerDown(ev, cl.id)}
+                style={{ cursor: 'grab' }}
+              >
                 <line
                   x1={cl.pt.x}
                   y1={cl.pt.y}
-                  x2={cl.anchorX}
-                  y2={cl.anchorY}
+                  x2={anchorX}
+                  y2={anchorY}
                   stroke={isPlanned ? '#dc2626' : '#334155'}
                   strokeWidth="1.1"
                   strokeDasharray="3,3"
                 />
                 <rect
-                  x={cl.boxX}
-                  y={cl.boxY}
+                  x={boxX}
+                  y={boxY}
                   width={cl.boxWidth}
                   height={cl.boxHeight}
                   rx="3"
                   fill="#ffffff"
+                  fillOpacity="0.95"
                   stroke={isPlanned ? '#dc2626' : '#0f172a'}
                   strokeWidth="1.2"
                 />
                 <text
-                  x={cl.boxX + 5}
-                  y={cl.boxY + 11}
+                  x={boxX + 5}
+                  y={boxY + 11}
                   fontSize="8.5"
                   fontWeight="800"
                   fill={isPlanned ? '#dc2626' : '#0f172a'}
@@ -1899,8 +2234,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                 {cl.lines.map((line, lIdx) => (
                   <text
                     key={lIdx}
-                    x={cl.boxX + 5}
-                    y={cl.boxY + 22 + lIdx * 10}
+                    x={boxX + 5}
+                    y={boxY + 22 + lIdx * 10}
                     fontSize="8"
                     fontWeight="700"
                     fill="#1e293b"
@@ -1965,62 +2300,67 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             );
           })}
 
-          {/* Draggable Legend Box (Dapat Dipindah-Pindah Bebas) */}
+          {/* Draggable Legend Box (Dapat Dipindah-Pindah Bebas; Kabel Hanya Menuliskan Panjangnya) */}
           <g
+            id="draggable-etiket-legend"
             transform={`translate(${legendPos.x}, ${legendPos.y})`}
-            onMouseDown={handleLegendMouseDown}
-            style={{ cursor: 'move' }}
+            onPointerDown={handleLegendPointerDown}
+            style={{ cursor: isDraggingLegend ? 'grabbing' : 'move' }}
             className="select-none"
           >
             <rect
-              width="210"
+              width="214"
               height="154"
               rx="6"
               fill="#ffffff"
-              fillOpacity="0.94"
+              fillOpacity="0.96"
               stroke="#0f172a"
-              strokeWidth="1.5"
+              strokeWidth="1.6"
             />
             {/* Dark Drag Grip Header */}
             <rect
-              width="210"
+              width="214"
               height="24"
               rx="6"
               fill="#0f172a"
             />
             <rect
               y="18"
-              width="210"
+              width="214"
               height="6"
               fill="#0f172a"
             />
             <text
               x="10"
               y="16"
-              fontSize="9"
+              fontSize="8.8"
               fontWeight="900"
               fill="#ffffff"
-              letterSpacing="0.6"
+              letterSpacing="0.5"
             >
-              ❖ LEGENDA GAMBAR (GESER BEBAS)
+              ✥ LEGENDA GAMBAR (GESER BEBAS)
             </text>
 
-            {/* 1. JTM 20kV */}
+            {/* 1. Kabel Merah: Tuliskan Saja Panjangnya */}
             <line x1="12" y1="38" x2="38" y2="38" stroke="#dc2626" strokeWidth="2.6" />
             <text x="46" y="41" fontSize="8.5" fontWeight="700" fill="#0f172a">
-              JTM 20 kV (Garis Merah)
+              {cableLegendLengths.jtmMeters > 0
+                ? `${cableLegendLengths.jtmMeters}m`
+                : `${cableLegendLengths.plannedMeters}m`}
             </text>
 
-            {/* 2. JTR LVTC */}
+            {/* 2. Kabel Biru: Tuliskan Saja Panjangnya */}
             <line x1="12" y1="54" x2="38" y2="54" stroke="#2563eb" strokeWidth="2.6" />
             <text x="46" y="57" fontSize="8.5" fontWeight="700" fill="#0f172a">
-              JTR LVTC (Garis Biru)
+              {cableLegendLengths.jtrPlannedMeters > 0
+                ? `${cableLegendLengths.jtrPlannedMeters}m`
+                : `${cableLegendLengths.jtrMeters}m`}
             </text>
 
-            {/* 3. Sambungan Rumah (SR) */}
+            {/* 3. Kabel Oranye: Tuliskan Saja Panjangnya */}
             <line x1="12" y1="70" x2="38" y2="70" stroke="#f97316" strokeWidth="2" strokeDasharray="3,2" />
             <text x="46" y="73" fontSize="8.5" fontWeight="700" fill="#0f172a">
-              Sambungan Rumah (SR)
+              {cableLegendLengths.srMeters > 0 ? `${cableLegendLengths.srMeters}m` : '25m'}
             </text>
 
             {/* 4. Tiang Rencana & Eksisting */}
@@ -2046,13 +2386,13 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               ✕ Konstruksi Dibongkar
             </text>
 
-            {/* 7. Panjang Gawang */}
+            {/* 7. Total Panjang Kabel (m) */}
             <rect x="12" y="133" width="28" height="13" rx="2" fill="#f8fafc" stroke="#0f172a" strokeWidth="0.8" />
             <text x="26" y="142" fontSize="7.5" fontWeight="800" textAnchor="middle" fill="#0f172a">
-              25m
+              {spans[0]?.distanceMeters || 40}m
             </text>
             <text x="46" y="142" fontSize="8.5" fontWeight="700" fill="#0f172a">
-              Panjang Gawang Kabel
+              {cableLegendLengths.plannedMeters}m
             </text>
           </g>
         </svg>
@@ -2349,26 +2689,49 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                     {sec.items.map((row) => {
                       if (row.isPackageHeader) {
                         itemSeq = 0;
+                        const pkgCodeUpper = (
+                          row.parentPackageCode ||
+                          row.uraian ||
+                          ''
+                        ).toUpperCase();
+                        const pkgDef = CONSTRUCTION_PACKAGES_CATALOG.find(
+                          (p) => p.code.toUpperCase() === pkgCodeUpper
+                        );
+
                         return (
                           <tr
                             key={row.id}
-                            className="bg-amber-50/90 font-extrabold text-slate-900"
+                            className="bg-amber-100/70 font-extrabold text-slate-900 border-t border-b border-amber-300"
                           >
-                            <td className="border border-slate-300 px-2 py-1.5 text-center text-amber-800 font-black">
+                            <td className="border border-slate-300 px-2 py-1.5 text-center text-amber-900 font-black text-sm">
                               +
                             </td>
                             <td className="border border-slate-300 px-3 py-1.5">
-                              {row.uraian}
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 font-black text-[11px] font-mono">
+                                  {row.uraian}
+                                </span>
+                                <span className="font-bold text-slate-900 text-xs">
+                                  {pkgDef?.name || 'Paket Konstruksi'}
+                                </span>
+                                {row.sourceInfo && (
+                                  <span className="text-[10px] text-amber-900 font-medium bg-amber-200/60 px-1.5 py-0.5 rounded">
+                                    {row.sourceInfo}
+                                  </span>
+                                )}
+                              </div>
                             </td>
-                            <td className="border border-slate-300 px-2 py-1.5 text-center">
+                            <td className="border border-slate-300 px-2 py-1.5 text-center text-slate-400">
                               -
                             </td>
-                            <td className="border border-slate-300 px-2 py-1.5 text-center">
+                            <td className="border border-slate-300 px-2 py-1.5 text-center font-bold">
                               {row.satuan || 'Unit'}
                             </td>
                             <td className="border border-slate-300 px-2 py-1 text-center">
                               {readOnly ? (
-                                <span>{row.volume}</span>
+                                <span className="font-mono font-black text-amber-900 text-xs">
+                                  {row.volume}
+                                </span>
                               ) : (
                                 <input
                                   type="number"
@@ -2386,7 +2749,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                                       )
                                     );
                                   }}
-                                  className="w-14 text-center font-black bg-white border border-amber-400 rounded px-1 py-0.5"
+                                  className="w-16 text-center font-black bg-white border border-amber-500 rounded px-1.5 py-1 text-xs shadow-2xs focus:ring-2 focus:ring-amber-500"
+                                  title="Ubah jumlah set paket konstruksi ini (seluruh rincian material di bawah otomatis dikalikan)"
                                 />
                               )}
                             </td>
@@ -2415,15 +2779,16 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                                         (r) =>
                                           r.id !== row.id &&
                                           !(
-                                            r.section === row.section &&
-                                            r.parentPackageCode ===
-                                              row.parentPackageCode
+                                            r.parentHeaderId === row.id ||
+                                            (r.parentPackageCode &&
+                                              r.parentPackageCode.toUpperCase() ===
+                                                pkgCodeUpper)
                                           )
                                       )
                                     )
                                   }
-                                  className="text-red-600 hover:text-red-800 p-0.5"
-                                  title="Hapus Paket Konstruksi"
+                                  className="text-rose-600 hover:text-rose-800 p-1 cursor-pointer"
+                                  title="Hapus Paket Konstruksi dan Seluruh Detail Materialnya"
                                 >
                                   <Trash2 className="w-3.5 h-3.5 mx-auto" />
                                 </button>
@@ -2435,27 +2800,54 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
                       itemSeq += 1;
                       const brk = calculateRabRowBreakdown(row);
+                      const isChild = Boolean(
+                        row.parentPackageCode || row.parentHeaderId
+                      );
 
                       return (
                         <tr
                           key={row.id}
-                          className="hover:bg-slate-50 text-slate-800"
+                          className={`${
+                            isChild
+                              ? 'bg-amber-50/25 hover:bg-amber-50/60'
+                              : 'hover:bg-slate-50'
+                          } text-slate-800 transition-colors`}
                         >
-                          <td className="border border-slate-300 px-2 py-1 text-center font-mono text-slate-500">
+                          <td className="border border-slate-300 px-2 py-1 text-center font-mono text-slate-500 text-xs">
                             {row.itemNo ?? itemSeq}
                           </td>
-                          <td className="border border-slate-300 px-3 py-1 font-medium">
-                            {row.uraian}
+                          <td
+                            className={`border border-slate-300 py-1 ${
+                              isChild ? 'pl-6 pr-3' : 'px-3'
+                            } font-medium text-xs`}
+                          >
+                            {isChild ? (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-amber-600 font-bold font-mono">
+                                  ↳
+                                </span>
+                                <span className="text-slate-900 font-medium">
+                                  {row.uraian}
+                                </span>
+                                {row.unitQtyPerPackage !== undefined && (
+                                  <span className="text-[10px] text-slate-500 font-normal ml-1">
+                                    ({row.unitQtyPerPackage} {row.satuan}/set)
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span>{row.uraian}</span>
+                            )}
                           </td>
-                          <td className="border border-slate-300 px-2 py-1 text-center font-bold text-slate-600">
+                          <td className="border border-slate-300 px-2 py-1 text-center font-bold text-slate-600 text-xs">
                             {row.gol}
                           </td>
-                          <td className="border border-slate-300 px-2 py-1 text-center">
+                          <td className="border border-slate-300 px-2 py-1 text-center text-xs">
                             {row.satuan}
                           </td>
-                          <td className="border border-slate-300 px-2 py-1 text-center font-mono">
+                          <td className="border border-slate-300 px-2 py-1 text-center font-mono text-xs">
                             {readOnly ? (
-                              <span>{row.volume}</span>
+                              <span className="font-bold">{row.volume}</span>
                             ) : (
                               <input
                                 type="number"
@@ -2470,27 +2862,29 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                                     )
                                   );
                                 }}
-                                className="w-14 text-center border border-slate-300 rounded px-1 py-0.5 font-bold"
+                                className="w-16 text-center border border-slate-300 rounded px-1 py-0.5 font-bold bg-white text-xs"
                               />
                             )}
                           </td>
-                          <td className="border border-slate-300 px-2.5 py-1 text-right font-mono">
+                          <td className="border border-slate-300 px-2.5 py-1 text-right font-mono text-xs">
                             {row.hargaSatuan.toLocaleString('id-ID')}
                           </td>
-                          <td className="border border-slate-300 px-2.5 py-1 text-right font-mono">
-                            {brk.mdu > 0 ? brk.mdu.toLocaleString('id-ID') : '0'}
+                          <td className="border border-slate-300 px-2.5 py-1 text-right font-mono text-xs">
+                            {brk.mdu > 0
+                              ? brk.mdu.toLocaleString('id-ID')
+                              : '0'}
                           </td>
-                          <td className="border border-slate-300 px-2.5 py-1 text-right font-mono">
+                          <td className="border border-slate-300 px-2.5 py-1 text-right font-mono text-xs">
                             {brk.hardware > 0
                               ? brk.hardware.toLocaleString('id-ID')
                               : '0'}
                           </td>
-                          <td className="border border-slate-300 px-2.5 py-1 text-right font-mono">
+                          <td className="border border-slate-300 px-2.5 py-1 text-right font-mono text-xs">
                             {brk.jasa > 0
                               ? brk.jasa.toLocaleString('id-ID')
                               : '0'}
                           </td>
-                          <td className="border border-slate-300 px-2.5 py-1 text-right font-mono font-bold text-slate-900 bg-slate-50/70">
+                          <td className="border border-slate-300 px-2.5 py-1 text-right font-mono font-bold text-slate-900 bg-slate-50/70 text-xs">
                             {brk.jumlah.toLocaleString('id-ID')}
                           </td>
                           {!readOnly && (
@@ -2502,7 +2896,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                                     prev.filter((r) => r.id !== row.id)
                                   )
                                 }
-                                className="text-slate-400 hover:text-red-600 p-0.5"
+                                className="text-slate-400 hover:text-rose-600 p-0.5 cursor-pointer"
                                 title="Hapus Baris"
                               >
                                 <Trash2 className="w-3.5 h-3.5 mx-auto" />
@@ -2758,11 +3152,11 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
           </button>
           <button
             type="button"
-            onClick={handleGenerateAndApplyRab}
+            onClick={() => handleGenerateAndApplyRab(false)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-sm cursor-pointer"
           >
             <Zap className="w-3.5 h-3.5" />
-            <span>Generate &amp; Simpan RAB</span>
+            <span>Simpan Gambar &amp; RAB</span>
           </button>
         </div>
       </div>
@@ -3049,19 +3443,22 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                 {showLegend && (
                   <>
                     <span className="inline-flex items-center gap-1">
-                      <span className="w-3 h-1 bg-red-600 inline-block" /> JTM
-                      20kV
+                      <span className="w-3 h-1 bg-red-600 inline-block" />{' '}
+                      {cableLegendLengths.jtmMeters > 0
+                        ? `${cableLegendLengths.jtmMeters}m`
+                        : `${cableLegendLengths.plannedMeters}m`}
                     </span>
                     <span className="inline-flex items-center gap-1">
-                      <span className="w-3 h-1 bg-sky-600 inline-block" /> JTR
-                      LVTC
+                      <span className="w-3 h-1 bg-sky-600 inline-block" />{' '}
+                      {cableLegendLengths.jtrPlannedMeters > 0
+                        ? `${cableLegendLengths.jtrPlannedMeters}m`
+                        : `${cableLegendLengths.jtrMeters}m`}
                     </span>
                     <span className="inline-flex items-center gap-1">
-                      <span className="w-3 h-1 bg-amber-600 inline-block" /> SR
+                      <span className="w-3 h-1 bg-amber-600 inline-block" /> {cableLegendLengths.srMeters}m
                     </span>
                     <span className="text-slate-400">
-                      <strong>///</strong> = 3 Phase • <strong>/</strong> = 1
-                      Phase
+                      <strong>///</strong> = 3 Phase • <strong>/</strong> = 1 Phase
                     </span>
                     <span className="text-red-400 font-bold">
                       ✕ = Konstruksi / Kabel Dibongkar
@@ -3238,14 +3635,23 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
                   {/* Add Construction Package to Node */}
                   <div className="bg-slate-800/90 border border-slate-700 rounded-lg p-2.5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-extrabold uppercase text-amber-300">
+                        Input Konstruksi pada Titik
+                      </span>
+                      <span className="text-[9px] text-slate-400">
+                        {filteredCatalog.length} paket tersedia
+                      </span>
+                    </div>
+
                     <div className="relative">
                       <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" />
                       <input
                         type="text"
                         value={constructionSearch}
                         onChange={(e) => setConstructionSearch(e.target.value)}
-                        placeholder="Cari konstruksi / material (misal: MJ6-T, CJ5, CC1, DB01)..."
-                        className="w-full bg-slate-900 border border-slate-700 rounded pl-8 pr-2 py-1 text-[11px] text-white placeholder-slate-500"
+                        placeholder="Cari kode/nama konstruksi (MJ6-T, SJ6, CJ5, CC1, DB01, dll)..."
+                        className="w-full bg-slate-900 border border-slate-700 rounded pl-8 pr-2 py-1 text-[11px] text-white placeholder-slate-500 focus:ring-1 focus:ring-amber-400 focus:border-amber-400"
                       />
                     </div>
 
@@ -3277,18 +3683,49 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                       ))}
                     </div>
 
-                    <div className="grid grid-cols-12 gap-1.5 items-center">
+                    {/* Live search selector & preview */}
+                    <div className="space-y-1.5">
                       <select
                         value={selectedPkgCode}
                         onChange={(e) => setSelectedPkgCode(e.target.value)}
-                        className="col-span-6 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] font-bold text-white"
+                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] font-bold text-white truncate"
                       >
                         {filteredCatalog.map((pkg) => (
                           <option key={pkg.code} value={pkg.code}>
-                            {pkg.code} — {pkg.name}
+                            [{pkg.category}] {pkg.code} — {pkg.name} ({pkg.components.length} mat)
                           </option>
                         ))}
                       </select>
+
+                      {(() => {
+                        const curPkg = CONSTRUCTION_PACKAGES_CATALOG.find(
+                          (p) => p.code === selectedPkgCode
+                        );
+                        if (!curPkg) return null;
+                        return (
+                          <div className="bg-slate-950/70 p-1.5 rounded border border-slate-800 text-[9.5px] text-slate-300 space-y-0.5">
+                            <div className="font-bold text-amber-200 truncate flex items-center justify-between">
+                              <span>{curPkg.name}</span>
+                              <span className="text-[9px] text-slate-400">
+                                {curPkg.components.length} material
+                              </span>
+                            </div>
+                            <div className="truncate text-slate-400 text-[9px]">
+                              {curPkg.components
+                                .slice(0, 3)
+                                .map((c) => {
+                                  const k = KHS_MASTER_CATALOG[c.khsId];
+                                  return `${k?.uraian || c.khsId} (${c.qty})`;
+                                })
+                                .join(' • ')}
+                              {curPkg.components.length > 3 ? '...' : ''}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    <div className="grid grid-cols-12 gap-1.5 items-center pt-0.5">
                       <select
                         value={newAssignmentAction}
                         onChange={(e) =>
@@ -3298,35 +3735,47 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                             >
                           )
                         }
-                        className="col-span-3 bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-[10px] font-bold text-white"
+                        className="col-span-4 bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-[10px] font-bold text-white"
                       >
-                        <option value="PASANG">Pasang</option>
-                        <option value="BONGKAR">Bongkar</option>
-                        <option value="BONGKAR_PASANG">Bkr-Psg</option>
+                        <option value="PASANG">Pasang (Baru)</option>
+                        <option value="BONGKAR">Bongkar (✕)</option>
+                        <option value="BONGKAR_PASANG">Bkr-Psg (⇄)</option>
                       </select>
-                      <input
-                        type="number"
-                        min={1}
-                        value={newAssignmentQty}
-                        onChange={(e) =>
-                          setNewAssignmentQty(
-                            Math.max(1, Number(e.target.value) || 1)
-                          )
-                        }
-                        className="col-span-1 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-center text-[11px] font-bold text-white"
-                      />
+                      <div className="col-span-4 flex items-center bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5">
+                        <span className="text-[10px] text-slate-400 mr-1 font-bold">
+                          Qty:
+                        </span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={newAssignmentQty}
+                          onChange={(e) =>
+                            setNewAssignmentQty(
+                              Math.max(1, Number(e.target.value) || 1)
+                            )
+                          }
+                          className="w-full bg-transparent text-center text-[11px] font-bold text-white focus:outline-hidden"
+                        />
+                      </div>
                       <button
                         type="button"
                         onClick={handleAddConstructionToNode}
-                        className="col-span-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded py-1 text-[11px] font-extrabold"
+                        className="col-span-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded py-1 px-1 text-[11px] font-extrabold cursor-pointer shadow-2xs"
                       >
-                        +Tambah
+                        +Tambahkan
                       </button>
                     </div>
                   </div>
 
                   {/* Assigned Constructions on This Pole */}
                   <div className="space-y-1.5">
+                    {selectedNode.constructions.length === 0 && (
+                      <div className="p-2.5 rounded bg-slate-800/40 border border-slate-700/60 text-center text-[11px] text-slate-400">
+                        Titik tiang ini masih kosong. Silakan cari dan tambahkan
+                        konstruksi di atas.
+                      </div>
+                    )}
+
                     {selectedNode.constructions.map((assg, idx) => {
                       const breakdown = getConstructionAssignmentBreakdown(
                         assg,
@@ -3365,7 +3814,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                                   })
                                 }
                                 className="w-11 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-center text-[10px] font-bold"
-                                title="Jumlah Set Konstruksi"
+                                title="Jumlah Set Konstruksi (detail material di bawah otomatis dikalikan)"
                               />
                               <select
                                 value={assg.actionType || 'PASANG'}
@@ -3388,7 +3837,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                                     isExpanded ? null : idx
                                   )
                                 }
-                                className="px-1.5 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-[10px] font-bold"
+                                className="px-1.5 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-[10px] font-bold cursor-pointer"
+                                title="Lihat detail rincian material"
                               >
                                 {isExpanded ? (
                                   <ChevronUp className="w-3 h-3" />
@@ -3401,7 +3851,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                                 onClick={() =>
                                   handleRemoveConstructionFromNode(idx)
                                 }
-                                className="p-0.5 text-rose-400 hover:text-rose-300"
+                                className="p-0.5 text-rose-400 hover:text-rose-300 cursor-pointer"
+                                title="Hapus Konstruksi dari Titik"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -3409,18 +3860,59 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                           </div>
 
                           {isExpanded && (
-                            <div className="mt-2 pt-2 border-t border-slate-700 space-y-1 text-[10px]">
+                            <div className="mt-2 pt-2 border-t border-slate-700 space-y-1.5 text-[10px]">
+                              <div className="text-[10px] font-bold text-amber-300 pb-1 flex justify-between items-center border-b border-slate-700/60">
+                                <span>Detail Material Konstruksi ({assg.code}):</span>
+                                <span className="text-[9px] bg-slate-900 px-1.5 py-0.5 rounded text-amber-200 border border-amber-500/30">
+                                  Volume = Qty Satuan × {assg.qty} Set
+                                </span>
+                              </div>
                               {breakdown.rows.map((row) => (
                                 <div
                                   key={row.khsId}
-                                  className="flex items-center justify-between gap-2 text-slate-300"
+                                  className={`flex items-center justify-between gap-1.5 px-2 py-1 rounded border transition-colors ${
+                                    row.enabled
+                                      ? 'bg-slate-900/80 border-slate-700 text-slate-200'
+                                      : 'bg-slate-950/40 border-slate-800 text-slate-500 line-through'
+                                  }`}
                                 >
-                                  <span className="truncate flex-1">
-                                    • {row.uraian}
-                                  </span>
-                                  <span className="font-mono text-amber-200 shrink-0">
-                                    {row.volume} {row.satuan}
-                                  </span>
+                                  <label className="flex items-center gap-1.5 truncate flex-1 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={row.enabled}
+                                      onChange={() =>
+                                        handleToggleComponentOnNode(
+                                          idx,
+                                          row.khsId
+                                        )
+                                      }
+                                      className="rounded text-indigo-500 focus:ring-0 w-3 h-3"
+                                    />
+                                    <span className="truncate">{row.uraian}</span>
+                                  </label>
+                                  <div className="flex items-center gap-1 shrink-0 font-mono">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step="any"
+                                      value={row.unitQty}
+                                      onChange={(e) =>
+                                        handleUpdateComponentQtyOnNode(
+                                          idx,
+                                          row.khsId,
+                                          Number(e.target.value) || 0
+                                        )
+                                      }
+                                      className="w-10 bg-slate-800 border border-slate-600 rounded px-1 py-0.2 text-center text-[10px] font-bold text-white"
+                                      title="Kuantitas per 1 set konstruksi"
+                                    />
+                                    <span className="text-slate-400 text-[9px]">
+                                      × {assg.qty} =
+                                    </span>
+                                    <span className="font-bold text-amber-300 bg-slate-800 px-1.5 py-0.5 rounded border border-amber-400/30 text-[10px]">
+                                      {row.volume} {row.satuan}
+                                    </span>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -3697,8 +4189,17 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
               <button
                 type="button"
+                onClick={() => handleGenerateAndApplyRab(false)}
+                className="ml-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-2xs cursor-pointer"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Simpan Gambar &amp; RAB
+              </button>
+
+              <button
+                type="button"
                 onClick={() => window.print()}
-                className="ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5" />
                 Cetak Gambar
@@ -3777,63 +4278,120 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              <select
-                value={newRowSection}
-                onChange={(e) =>
-                  setNewRowSection(e.target.value as RabRomanSection)
-                }
-                className="px-2 py-1 border border-slate-300 rounded bg-white text-[11px] font-bold"
-              >
-                {RAB_ROMAN_SECTIONS.map((s) => (
-                  <option key={s.code} value={s.code}>
-                    {s.code}. {s.title}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={newRowKhsId}
-                onChange={(e) => setNewRowKhsId(e.target.value)}
-                className="px-2 py-1 border border-slate-300 rounded bg-white text-[11px] font-bold max-w-[220px]"
-              >
-                {khsCatalogList.map((k) => (
-                  <option key={k.id} value={k.id}>
-                    {k.uraian} ({k.gol} - Rp{' '}
-                    {k.hargaSatuan.toLocaleString('id-ID')})
-                  </option>
-                ))}
-              </select>
-              <input
-                type="number"
-                min={1}
-                value={newRowVol}
-                onChange={(e) =>
-                  setNewRowVol(Math.max(1, Number(e.target.value) || 1))
-                }
-                className="w-14 px-2 py-1 border border-slate-300 rounded text-center font-bold"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  const khs = KHS_MASTER_CATALOG[newRowKhsId];
-                  if (!khs) return;
-                  const newItem: RabLineItem = {
-                    id: `custom-${Date.now()}`,
-                    section: newRowSection,
-                    uraian: khs.uraian,
-                    gol: khs.gol,
-                    satuan: khs.satuan,
-                    volume: newRowVol,
-                    hargaSatuan: khs.hargaSatuan,
-                    khsId: khs.id,
-                  };
-                  setRabItems((prev) => [...prev, newItem]);
-                }}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white font-bold"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Tambah Item KHS
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddModalMode('PACKAGE');
+                    setAddModalCategory('ALL');
+                    setAddModalSearch('');
+                    setAddModalQty(1);
+                    setShowAddRabModal(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-2xs cursor-pointer transition"
+                >
+                  <Plus className="w-4 h-4" />
+                  + Tambah Item / Paket ke RAB
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddModalMode('MATERIAL_BONGKAR');
+                    setAddModalCategory('BONGKAR');
+                    setAddModalSearch('');
+                    setAddModalSection('XV');
+                    setAddModalQty(1);
+                    setShowAddRabModal(true);
+                  }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 font-extrabold text-xs cursor-pointer transition"
+                  title="Tambah Upah / Jasa Pembongkaran Seksi XV"
+                >
+                  <span className="text-rose-600 font-black">⚡</span>
+                  + Jasa Pembongkaran (Seksi XV)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleGenerateAndApplyRab(true)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs border border-slate-300 cursor-pointer"
+                  title="Hitung ulang RAB otomatis dari titik & kabel di peta survei"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Hitung Ulang dari Peta
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Fallback quick insert row */}
+                <div className="inline-flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-slate-200 text-xs">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase px-1">Cepat:</span>
+                  <select
+                    value={newRowSection}
+                    onChange={(e) =>
+                      setNewRowSection(e.target.value as RabRomanSection)
+                    }
+                    className="px-1.5 py-0.5 border border-slate-300 rounded bg-white text-[11px] font-bold"
+                  >
+                    {RAB_ROMAN_SECTIONS.map((s) => (
+                      <option key={s.code} value={s.code}>
+                        {s.code}. {s.title}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={newRowKhsId}
+                    onChange={(e) => setNewRowKhsId(e.target.value)}
+                    className="px-1.5 py-0.5 border border-slate-300 rounded bg-white text-[11px] font-bold max-w-[160px] truncate"
+                  >
+                    {khsCatalogList.map((k) => (
+                      <option key={k.id} value={k.id}>
+                        {k.uraian} ({k.gol})
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min={1}
+                    value={newRowVol}
+                    onChange={(e) =>
+                      setNewRowVol(Math.max(1, Number(e.target.value) || 1))
+                    }
+                    className="w-12 px-1 py-0.5 border border-slate-300 rounded text-center font-bold text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const khs = KHS_MASTER_CATALOG[newRowKhsId];
+                      if (!khs) return;
+                      const newItem: RabLineItem = {
+                        id: `custom-${Date.now()}`,
+                        section: newRowSection,
+                        uraian: khs.uraian,
+                        gol: khs.gol,
+                        satuan: khs.satuan,
+                        volume: newRowVol,
+                        hargaSatuan: khs.hargaSatuan,
+                        khsId: khs.id,
+                      };
+                      setRabItems((prev) => [...prev, newItem]);
+                    }}
+                    className="px-2 py-0.5 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs cursor-pointer"
+                  >
+                    +
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleGenerateAndApplyRab(false)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-sm cursor-pointer"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Simpan RAB &amp; Gambar
+                </button>
+              </div>
             </div>
           </div>
 
@@ -3842,7 +4400,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       )}
 
       {/* ===================================================================== */}
-      {/* SUB-TAB 4: BUNDEL FILE SURVEI & RAB (DINAMIS SESUAI HALAMAN SURAT)   */}
+      {/* SUB-TAB 4: BUNDEL FILE SURAT (1..N) + RAB (N+1) + GAMBAR (N+2)        */}
       {/* ===================================================================== */}
       {viewTab === 'pdf3hal' && (() => {
         const totalSuratPages = Math.max(1, attachedSuratPages.length);
@@ -3851,24 +4409,53 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         return (
           <div className="space-y-6 bg-slate-100 p-4 rounded-xl border border-slate-300">
             {/* Header Toolbar */}
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm">
               <div>
                 <h5 className="text-sm font-extrabold text-slate-900">
-                  Bundel Dokumen Hasil Survei Teknik &amp; RAB ({totalBundelPages} Halaman Lengkap)
+                  Bundel Dokumen Permohonan, RAB &amp; Gambar Sketsa ({totalBundelPages} Halaman Dinamis)
                 </h5>
-                <p className="text-xs text-slate-600">
-                  Halaman 1 s/d {totalSuratPages}: Surat Permohonan Masuk ({totalSuratPages} Lembar) • Halaman {totalSuratPages + 1}: Gambar
-                  Sketsa Survei Ber-Etiket PLN • Halaman {totalSuratPages + 2}: Tabel RAB Resmi PLN
+                <p className="text-xs text-slate-600 mt-0.5">
+                  Halaman 1{totalSuratPages > 1 ? ` s/d ${totalSuratPages}` : ''}:{' '}
+                  <strong>Surat Permohonan ({totalSuratPages} Halaman)</strong> • Halaman {totalSuratPages + 1}:{' '}
+                  <strong>Tabel RAB Resmi PLN</strong> • Halaman {totalSuratPages + 2}:{' '}
+                  <strong>Gambar Sketsa Ber-Etiket PLN</strong>
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <label className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-xs font-bold cursor-pointer transition">
+                {/* Quick Page Count Selector for Surat Permohonan */}
+                <div className="inline-flex items-center gap-1 bg-slate-100 px-2 py-1 rounded-lg border border-slate-300 text-xs">
+                  <span className="font-bold text-slate-700 text-[11px]">Jumlah Hal. Surat:</span>
+                  {[1, 2, 3, 4].map((cnt) => (
+                    <button
+                      key={cnt}
+                      type="button"
+                      onClick={() => handleSetSuratPageCount(cnt)}
+                      className={`px-2 py-0.5 rounded font-extrabold text-[11px] transition cursor-pointer ${
+                        totalSuratPages === cnt
+                          ? 'bg-indigo-600 text-white shadow-2xs'
+                          : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-300'
+                      }`}
+                    >
+                      {cnt} Hal
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={handleAddFormalSuratPage}
+                    className="px-2 py-0.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-950 font-extrabold text-[11px] border border-amber-300 cursor-pointer"
+                    title="Tambah 1 Halaman Lampiran Surat Permohonan"
+                  >
+                    + Hal Surat
+                  </button>
+                </div>
+
+                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-xs font-bold cursor-pointer transition">
                   <Upload className="w-3.5 h-3.5" />
-                  <span>+ Tambah Halaman Surat Permohonan</span>
+                  <span>Upload Scan/PDF Surat</span>
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="image/*,.pdf"
                     multiple
                     onChange={handleUploadSuratPage}
                     className="hidden"
@@ -3877,19 +4464,30 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
                 <button
                   type="button"
+                  onClick={() => handleGenerateAndApplyRab(false)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-sm cursor-pointer"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Simpan Bundel, Gambar &amp; RAB</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => window.print()}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-sm cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-sm cursor-pointer"
                 >
                   <Printer className="w-4 h-4" />
-                  Cetak / Simpan PDF ({totalBundelPages} Halaman)
+                  Cetak PDF ({totalBundelPages} Hal)
                 </button>
               </div>
             </div>
 
-            {/* HALAMAN 1 s/d totalSuratPages: SURAT PERMOHONAN RESMI */}
+            {/* HALAMAN 1 s/d totalSuratPages: SURAT PERMOHONAN RESMI (SESUAI JUMLAH HALAMAN SURAT) */}
             {Array.from({ length: totalSuratPages }).map((_, pIdx) => {
               const pageNumber = pIdx + 1;
-              const pageImage = attachedSuratPages[pIdx];
+              const pageData = attachedSuratPages[pIdx];
+              const isFormalPlaceholder = !pageData || pageData.startsWith('FORMAL_PAGE_');
+              const isPdfDataUrl = Boolean(pageData && pageData.startsWith('data:application/pdf'));
               const hasFailedImg = Boolean(failedImageIndices[pIdx]);
 
               return (
@@ -3897,109 +4495,96 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                   key={`surat-page-${pIdx}`}
                   className="bg-white border-2 border-slate-900 p-6 rounded-sm shadow-sm space-y-4"
                 >
-                  <div className="flex items-center justify-between border-b-2 border-slate-900 pb-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-slate-900 pb-3">
                     <div>
                       <span className="px-2 py-0.5 bg-slate-900 text-white text-[10px] font-black uppercase">
-                        HALAMAN {pageNumber} / {totalBundelPages} — LAMPIRAN SURAT PERMOHONAN (LEMBAR {pageNumber} DARI {totalSuratPages})
+                        HALAMAN {pageNumber} / {totalBundelPages} — SURAT PERMOHONAN PELANGGAN (HALAMAN {pageNumber} DARI {totalSuratPages})
                       </span>
                       <h4 className="text-sm font-black text-slate-900 uppercase mt-1">
-                        DOKUMEN SURAT PERMOHONAN RESMI (TEREGISTRASI SECURITY &amp; LOKET PELAYANAN)
+                        {pIdx === 0
+                          ? `SURAT PERMOHONAN RESMI — ${item.projectName}`
+                          : pIdx === 1
+                          ? `LAMPIRAN SURAT PERMOHONAN (LEMBAR ${pageNumber}) — RINCIAN TEKNIS & LOKASI PERMOHONAN`
+                          : `LAMPIRAN SURAT PERMOHONAN (LEMBAR ${pageNumber}) — DOKUMEN PENDUKUNG & PERNYATAAN PELANGGAN`}
                       </h4>
                     </div>
-                    <div className="text-right text-xs font-bold text-slate-600">
-                      No. Agenda: #{item.id.slice(-6)} • {item.tglSurat}
-                    </div>
-                  </div>
-
-                  {/* Summary Bar */}
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs bg-slate-50 p-3.5 rounded border border-slate-200">
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-500 uppercase">Nama Pemohon</p>
-                      <p className="font-extrabold text-slate-900">{item.kontakPerson}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-500 uppercase">No. Surat Permohonan</p>
-                      <p className="font-bold text-slate-900">{item.suratPermohonan}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-500 uppercase">Jenis Permohonan</p>
-                      <p className="font-bold text-indigo-700">
-                        {item.transaksi} - {item.peruntukan}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-500 uppercase">Lokasi Permohonan</p>
-                      <p className="font-bold text-slate-900">{item.alamat}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-500 uppercase">Kebutuhan Daya</p>
-                      <p className="font-bold text-slate-900">
-                        {item.dayaBaru ? `${item.dayaBaru.toLocaleString('id-ID')} VA` : '-'} ({item.tarif})
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-500 uppercase">Status Verifikasi</p>
-                      <p className="font-bold text-emerald-700">✓ Berkas Asli Terverifikasi Posko Security</p>
-                    </div>
-                  </div>
-
-                  {/* Main Letter Display or Pristine Formal Letter Layout */}
-                  {pageImage && !hasFailedImg ? (
-                    <div className="border border-slate-300 rounded p-2 bg-slate-50 space-y-2">
-                      <div className="flex items-center justify-between text-xs px-2 text-slate-600">
-                        <span className="font-bold">Scan Dokumen Asli Lembar ke-{pageNumber}:</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-600">
+                        No. Surat: {item.suratPermohonan || '-'} • {item.tglSurat}
+                      </span>
+                      {totalSuratPages > 1 && (
                         <button
                           type="button"
                           onClick={() => handleRemoveSuratPage(pIdx)}
-                          className="text-rose-600 hover:text-rose-800 text-[11px] font-bold cursor-pointer"
+                          className="px-2 py-1 rounded bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 text-[11px] font-bold cursor-pointer"
                         >
-                          ✕ Hapus Lembar Ini
+                          ✕ Hapus Hal. {pageNumber}
                         </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Uploaded PDF or Image Scan if provided */}
+                  {!isFormalPlaceholder && isPdfDataUrl ? (
+                    <div className="border border-slate-300 rounded p-2 bg-slate-50 space-y-2">
+                      <div className="flex items-center justify-between text-xs px-2 text-slate-700 font-bold">
+                        <span>Dokumen PDF Surat Permohonan (Halaman {pageNumber}):</span>
                       </div>
-                      <img
-                        src={pageImage}
-                        alt={`Lampiran Surat Permohonan Lembar ${pageNumber}`}
-                        onError={() => setFailedImageIndices((prev) => ({ ...prev, [pIdx]: true }))}
-                        className="max-h-[600px] w-auto mx-auto object-contain rounded border border-slate-200 shadow-xs"
+                      <iframe
+                        src={pageData}
+                        title={`PDF Surat Permohonan Halaman ${pageNumber}`}
+                        className="w-full h-[640px] rounded border border-slate-300 bg-white"
                       />
                     </div>
-                  ) : (
-                    /* Pristine Formal PLN Application Letter Layout (Never broken!) */
+                  ) : !isFormalPlaceholder && !hasFailedImg ? (
+                    <div className="border border-slate-300 rounded p-2 bg-slate-50 space-y-2">
+                      <div className="flex items-center justify-between text-xs px-2 text-slate-600">
+                        <span className="font-bold">Scan Dokumen Surat Permohonan Halaman {pageNumber}:</span>
+                      </div>
+                      <img
+                        src={pageData}
+                        alt={`Lampiran Surat Permohonan Lembar ${pageNumber}`}
+                        onError={() => setFailedImageIndices((prev) => ({ ...prev, [pIdx]: true }))}
+                        className="max-h-[640px] w-auto mx-auto object-contain rounded border border-slate-200 shadow-xs"
+                      />
+                    </div>
+                  ) : pIdx === 0 ? (
+                    /* HALAMAN 1 SURAT PERMOHONAN: SURAT PERMOHONAN UTAMA */
                     <div className="border-2 border-slate-300 rounded-lg p-6 bg-white space-y-4 font-serif text-slate-900">
-                      {/* Kop Surat Resmi */}
+                      {/* Kop Surat Resmi Pemohon */}
                       <div className="border-b-2 border-slate-900 pb-3 text-center space-y-0.5 font-sans">
                         <h3 className="text-sm font-black uppercase tracking-wider text-slate-950">
-                          {item.kontakPerson.toUpperCase()}
+                          {item.projectName.toUpperCase()}
                         </h3>
                         <p className="text-xs text-slate-700 font-semibold">{item.alamat}</p>
                         <p className="text-[11px] text-slate-500">
-                          Telp/WhatsApp: {item.noTelp || '-'} • Kontak: {item.kontakPerson}
+                          Kontak Pemohon / WhatsApp: {item.kontakPerson || '-'} • No. Nodin: {item.noNodin || '-'}
                         </p>
                       </div>
 
                       {/* Header Surat */}
-                      <div className="grid grid-cols-2 gap-4 text-xs font-sans pt-1">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-sans pt-1">
                         <div className="space-y-0.5">
                           <p>
-                            Nomor : <span className="font-mono font-bold">{item.suratPermohonan || '014/PFK-BBD/I/2026'}</span>
+                            Nomor : <span className="font-mono font-bold">{item.suratPermohonan || `014/${item.transaksi}-BBD/2026`}</span>
                           </p>
                           <p>
-                            Lampiran : <span>{totalSuratPages} Lembar Dokumen</span>
+                            Lampiran : <strong>{totalSuratPages} ({totalSuratPages === 1 ? 'Satu' : totalSuratPages === 2 ? 'Dua' : totalSuratPages === 3 ? 'Tiga' : totalSuratPages}) Halaman</strong>
                           </p>
                           <p>
                             Perihal :{' '}
                             <strong className="underline uppercase">
-                              Permohonan {item.transaksi} / Pergeseran Jaringan &amp; Pasang Baru Listrik PLN
+                              Surat Permohonan {item.transaksi} ({item.peruntukan})
                             </strong>
                           </p>
                         </div>
-                        <div className="text-right">
+                        <div className="sm:text-right">
                           <p>Magelang, {item.tglSurat || '04 November 2026'}</p>
                           <div className="mt-2 text-left inline-block">
                             <p className="font-bold">Kepada Yth.</p>
                             <p>Manajer PT PLN (Persero) UP3 Magelang</p>
                             <p>Up. Manajer ULP Borobudur</p>
-                            <p className="text-slate-600">di Tempat</p>
+                            <p className="text-slate-600">di Magelang</p>
                           </div>
                         </div>
                       </div>
@@ -4008,78 +4593,143 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                       <div className="text-xs space-y-2.5 pt-2 leading-relaxed font-sans">
                         <p>Dengan hormat,</p>
                         <p>
-                          Sehubungan dengan adanya rencana permohonan ketenagalistrikan / pergeseran konstruksi tiang dan
-                          penataan jaringan tenaga listrik PLN di lokasi kami, dengan ini kami mengajukan permohonan pelaksanaan
-                          survei teknis lapangan dan penyusunan Rencana Anggaran Biaya (RAB) dengan data permohonan sebagai berikut:
+                          Bersama surat ini kami mengajukan permohonan layanan ketenagalistrikan ({item.transaksi}) serta
+                          pelaksanaan survei teknis jaringan dan penyusunan Rencana Anggaran Biaya (RAB) kepada PT PLN (Persero)
+                          ULP Borobudur dengan rincian permohonan sebagai berikut:
                         </p>
 
-                        <div className="bg-slate-50 p-3 rounded border border-slate-200 space-y-1 font-mono text-[11px]">
-                          <div className="grid grid-cols-4">
-                            <span className="text-slate-500">1. Nama Pemohon</span>
-                            <span className="col-span-3 font-bold text-slate-900">: {item.kontakPerson}</span>
+                        <div className="bg-slate-50 p-3.5 rounded border border-slate-200 space-y-1.5 font-mono text-[11px]">
+                          <div className="grid grid-cols-12">
+                            <span className="col-span-4 text-slate-500">1. Nama Pemohon / Instansi</span>
+                            <span className="col-span-8 font-bold text-slate-900">: {item.projectName}</span>
                           </div>
-                          <div className="grid grid-cols-4">
-                            <span className="text-slate-500">2. Alamat Lokasi</span>
-                            <span className="col-span-3 text-slate-800">: {item.alamat}</span>
+                          <div className="grid grid-cols-12">
+                            <span className="col-span-4 text-slate-500">2. Nomor Kontak / HP WA</span>
+                            <span className="col-span-8 font-bold text-slate-900">: {item.kontakPerson}</span>
                           </div>
-                          <div className="grid grid-cols-4">
-                            <span className="text-slate-500">3. Jenis Permohonan</span>
-                            <span className="col-span-3 font-bold text-indigo-700">: {item.transaksi} ({item.peruntukan})</span>
+                          <div className="grid grid-cols-12">
+                            <span className="col-span-4 text-slate-500">3. Alamat Lokasi</span>
+                            <span className="col-span-8 text-slate-800">: {item.alamat}</span>
                           </div>
-                          <div className="grid grid-cols-4">
-                            <span className="text-slate-500">4. Daya / Tarif</span>
-                            <span className="col-span-3 font-bold text-slate-900">
-                              : {item.dayaBaru ? `${item.dayaBaru.toLocaleString('id-ID')} VA` : '-'} ({item.tarif})
+                          <div className="grid grid-cols-12">
+                            <span className="col-span-4 text-slate-500">4. Jenis Transaksi &amp; Peruntukan</span>
+                            <span className="col-span-8 font-bold text-indigo-700">: {item.transaksi} — {item.peruntukan}</span>
+                          </div>
+                          <div className="grid grid-cols-12">
+                            <span className="col-span-4 text-slate-500">5. Daya / Golongan Tarif</span>
+                            <span className="col-span-8 font-bold text-slate-900">
+                              : {item.dayaBaru ? `${item.dayaBaru.toLocaleString('id-ID')} VA` : '-'} ({item.tarif} • {item.meter})
                             </span>
                           </div>
-                          <div className="grid grid-cols-4">
-                            <span className="text-slate-500">5. Keterangan</span>
-                            <span className="col-span-3 text-slate-800">
-                              : {item.keteranganPekerjaan || 'Pergeseran tiang dan penarikan jaringan sesuai standar konstruksi PLN.'}
+                          <div className="grid grid-cols-12">
+                            <span className="col-span-4 text-slate-500">6. Uraian Permohonan</span>
+                            <span className="col-span-8 text-slate-800">
+                              : {item.keteranganPekerjaan || judulGambar}
                             </span>
                           </div>
                         </div>
 
                         <p>
-                          Demikian surat permohonan ini kami sampaikan dengan sebenarnya. Atas perhatian, kerja sama, dan bantuan
-                          yang diberikan oleh PT PLN (Persero), kami sampaikan terima kasih.
+                          Demikian surat permohonan ini kami sampaikan untuk dapat ditindaklanjuti sesuai prosedur dan standar
+                          konstruksi PT PLN (Persero). Atas perhatian dan kerja samanya kami ucapkan terima kasih.
                         </p>
                       </div>
 
                       {/* Tanda Tangan & Cap Registrasi Posko Security */}
                       <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-200 text-xs font-sans items-end">
-                        {/* Stempel Agenda Posko Security PLN */}
                         <div className="border-2 border-indigo-900 p-2.5 rounded text-indigo-950 bg-indigo-50/50 space-y-0.5 max-w-xs">
                           <div className="text-[10px] font-black uppercase tracking-wider text-indigo-900 border-b border-indigo-300 pb-1 flex items-center justify-between">
                             <span>PT PLN (PERSERO) ULP BOROBUDUR</span>
-                            <span className="text-emerald-700">✓ DITERIMA</span>
+                            <span className="text-emerald-700">✓ TERVERIFIKASI</span>
                           </div>
                           <p className="text-[10px] font-bold text-slate-700 mt-1">
-                            Posko Security &amp; Loket Registrasi
+                            Posko Security &amp; Pelayanan Pelanggan
                           </p>
                           <p className="text-[10px] font-mono">
-                            No. Agenda: <strong>#{item.id.slice(-6)}</strong>
+                            No. Nodin: <strong>{item.noNodin || `#${item.id.slice(-6)}`}</strong>
                           </p>
                           <p className="text-[10px] font-mono">
-                            Tgl Masuk: <strong>{item.tglSurat}</strong>
+                            Tgl Surat: <strong>{item.tglSurat}</strong>
                           </p>
-                          <div className="pt-1 text-[9px] text-slate-500 italic">
-                            Diteruskan ke Bagian Teknik untuk Pelaksanaan Survei &amp; RAB
-                          </div>
                         </div>
 
-                        {/* TTD Pemohon Bermaterai */}
                         <div className="text-center space-y-1 ml-auto">
                           <p className="font-bold text-slate-800">Pemohon,</p>
-                          <div className="h-16 flex items-center justify-center">
+                          <div className="h-14 flex items-center justify-center">
                             <div className="border border-rose-300 bg-rose-50 px-3 py-1 rounded text-[10px] font-bold text-rose-800 border-dashed">
                               MATERAI Rp 10.000
                             </div>
                           </div>
                           <p className="font-extrabold uppercase underline text-slate-900">
-                            {item.kontakPerson}
+                            {item.projectName}
                           </p>
-                          <p className="text-[10px] text-slate-500">Penanggung Jawab / Pemohon</p>
+                          <p className="text-[10px] text-slate-500">Kontak: {item.kontakPerson}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* HALAMAN 2..N SURAT PERMOHONAN: LAMPIRAN RINCIAN TEKNIS & DATA PENDUKUNG SURAT */
+                    <div className="border-2 border-slate-300 rounded-lg p-6 bg-white space-y-4 font-sans text-slate-900 text-xs">
+                      <div className="border-b-2 border-slate-900 pb-2 flex items-center justify-between">
+                        <div>
+                          <div className="text-[10px] font-bold uppercase text-indigo-700">
+                            LAMPIRAN SURAT PERMOHONAN NOMOR: {item.suratPermohonan || item.noNodin}
+                          </div>
+                          <h4 className="text-sm font-black uppercase text-slate-950">
+                            LEMBAR KE-{pageNumber} DARI {totalSuratPages}: DATA SPESIFIKASI TEKNIS, LOKASI &amp; KESANGGUPAN PELANGGAN
+                          </h4>
+                        </div>
+                        <span className="px-2.5 py-1 rounded bg-slate-100 border border-slate-300 font-mono font-bold text-[11px]">
+                          Hal. {pageNumber} / {totalSuratPages} Surat
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-50 p-4 rounded-lg border border-slate-200">
+                        <div className="space-y-1.5">
+                          <p className="font-extrabold text-slate-800 uppercase text-[11px] border-b border-slate-200 pb-1">
+                            A. Identitas &amp; Administrasi Pemohon
+                          </p>
+                          <p><span className="text-slate-500">Nama Lengkap / Badan:</span> <strong>{item.projectName}</strong></p>
+                          <p><span className="text-slate-500">NIK KTP / NPWP:</span> <strong className="font-mono">{item.nomorKtp || '3308091408890001 (Terlampir)'}</strong></p>
+                          <p><span className="text-slate-500">Nomor Telepon / WA:</span> <strong className="font-mono">{item.kontakPerson}</strong></p>
+                          <p><span className="text-slate-500">IDPEL / Meter Referensi:</span> <strong className="font-mono">{item.idPel || item.idPelTetangga || '-'}</strong></p>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <p className="font-extrabold text-slate-800 uppercase text-[11px] border-b border-slate-200 pb-1">
+                            B. Titik Lokasi &amp; Referensi Jaringan PLN
+                          </p>
+                          <p><span className="text-slate-500">Koordinat GPS Lokasi:</span> <strong className="font-mono">{tagingLokasi}</strong></p>
+                          <p><span className="text-slate-500">Gardu Distribusi:</span> <strong className="font-mono">{nomorGardu || item.nomorGardu || 'GD-BBD'}</strong></p>
+                          <p><span className="text-slate-500">Nomor Tiang Terdekat:</span> <strong className="font-mono">{nomorTiang || item.nomorTiang || '-'}</strong></p>
+                          <p><span className="text-slate-500">Jumlah Titik Konstruksi:</span> <strong>{nodes.length} Titik ({ cableLegendLengths.totalMeters }m Kabel)</strong></p>
+                        </div>
+                      </div>
+
+                      <div className="p-4 rounded-lg border border-slate-200 bg-white space-y-2">
+                        <p className="font-extrabold text-slate-800 uppercase text-[11px]">
+                          C. Pernyataan &amp; Lampiran Permohonan Pelanggan (Lembar {pageNumber})
+                        </p>
+                        <ol className="list-decimal list-inside space-y-1 text-slate-700 leading-relaxed">
+                          <li>
+                            Pemohon menyatakan bahwa lokasi pekerjaan di <strong>{item.alamat}</strong> siap disurvei dan bebas dari sengketa lahan untuk penempatan tiang/jaringan PLN.
+                          </li>
+                          <li>
+                            Permohonan <strong>{item.transaksi}</strong> dengan kebutuhan daya <strong>{item.dayaBaru.toLocaleString('id-ID')} VA ({item.tarif})</strong> diajukan sesuai kebutuhan riil di lapangan ({item.peruntukan}).
+                          </li>
+                          <li>
+                            Dokumen hasil survei berupa Rencana Anggaran Biaya (RAB) dan Gambar Sketsa Jaringan dilampirkan pada halaman berikutnya setelah lembar surat permohonan ini.
+                          </li>
+                        </ol>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-3 border-t border-slate-200">
+                        <div className="text-[11px] text-slate-500">
+                          Lampiran Surat Permohonan Halaman {pageNumber} dari {totalSuratPages} • Tanggal: {item.tglSurat}
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[11px] font-bold text-slate-700">Pemohon / Penanggung Jawab,</p>
+                          <p className="font-extrabold uppercase underline text-slate-900 mt-6">{item.projectName}</p>
                         </div>
                       </div>
                     </div>
@@ -4088,24 +4738,11 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               );
             })}
 
-            {/* HALAMAN totalSuratPages + 1: GAMBAR SKETSA SURVEI BER-ETIKET PLN */}
+            {/* HALAMAN totalSuratPages + 1: TABEL RENCANA ANGGARAN BIAYA (RAB) RESMI PLN */}
             <div className="bg-white border-2 border-slate-900 p-6 rounded-sm shadow-sm space-y-3">
               <div className="flex items-center justify-between border-b border-slate-300 pb-2">
                 <span className="px-2 py-0.5 bg-slate-900 text-white text-[10px] font-black uppercase">
-                  HALAMAN {totalSuratPages + 1} / {totalBundelPages} — GAMBAR SKETSA SURVEI BER-ETIKET PLN
-                </span>
-                <span className="text-xs font-bold text-slate-600">
-                  Petugas Survei: {petugasSurvei || '-'} • Lokasi: {tagingLokasi}
-                </span>
-              </div>
-              {renderEtiketEngineeringSvg()}
-            </div>
-
-            {/* HALAMAN totalSuratPages + 2: TABEL RENCANA ANGGARAN BIAYA (RAB) */}
-            <div className="bg-white border-2 border-slate-900 p-6 rounded-sm shadow-sm space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-300 pb-2">
-                <span className="px-2 py-0.5 bg-slate-900 text-white text-[10px] font-black uppercase">
-                  HALAMAN {totalSuratPages + 2} / {totalBundelPages} — RENCANA ANGGARAN BIAYA (RAB) RESMI PLN
+                  HALAMAN {totalSuratPages + 1} / {totalBundelPages} — RENCANA ANGGARAN BIAYA (RAB) RESMI PLN
                 </span>
                 <span className="text-xs font-extrabold text-slate-900">
                   Total RAB (+PPN {ppnPercent}%): Rp{' '}
@@ -4114,9 +4751,374 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               </div>
               {renderOfficialRabTable(true)}
             </div>
+
+            {/* HALAMAN totalSuratPages + 2: GAMBAR SKETSA SURVEI BER-ETIKET PLN */}
+            <div className="bg-white border-2 border-slate-900 p-6 rounded-sm shadow-sm space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-300 pb-2">
+                <span className="px-2 py-0.5 bg-slate-900 text-white text-[10px] font-black uppercase">
+                  HALAMAN {totalSuratPages + 2} / {totalBundelPages} — GAMBAR SKETSA SURVEI BER-ETIKET PLN (BACKGROUND MAPS)
+                </span>
+                <span className="text-xs font-bold text-slate-600">
+                  Petugas Survei: {petugasSurvei || '-'} • Lokasi: {tagingLokasi}
+                </span>
+              </div>
+              {renderEtiketEngineeringSvg()}
+            </div>
           </div>
         );
       })()}
+
+      {/* ===================================================================== */}
+      {/* MODAL: TAMBAH PAKET KONSTRUKSI & JASA PEMBONGKARAN KE RAB              */}
+      {/* ===================================================================== */}
+      {showAddRabModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-300 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black shadow-sm">
+                  <Plus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900">
+                    Katalog Konstruksi, Material &amp; Jasa Pembongkaran PLN
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Pilih paket konstruksi atau jasa pembongkaran KHS resmi PLN UID Jateng &amp; DIY
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddRabModal(false)}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Mode Switch & Search Filter Toolbar */}
+            <div className="p-4 border-b border-slate-200 bg-white space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                {/* Mode Selector */}
+                <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setAddModalMode('PACKAGE')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
+                      addModalMode === 'PACKAGE'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    📦 Paket Konstruksi ({CONSTRUCTION_PACKAGES_CATALOG.length} Paket)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddModalMode('MATERIAL_BONGKAR')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
+                      addModalMode === 'MATERIAL_BONGKAR'
+                        ? 'bg-rose-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    ⚡ Jasa Pembongkaran &amp; Material KHS
+                  </button>
+                </div>
+
+                {/* Live Search Input */}
+                <div className="relative flex-1 min-w-[220px] max-w-md">
+                  <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={addModalSearch}
+                    onChange={(e) => setAddModalSearch(e.target.value)}
+                    placeholder={
+                      addModalMode === 'PACKAGE'
+                        ? 'Cari kode paket (SJ6, MJ6-T, C1, GTR, BKR...)'
+                        : 'Cari jasa bongkar/material (Bongkar tiang, kabel, lvtc...)'
+                    }
+                    className="w-full pl-9 pr-8 py-1.5 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-indigo-500 bg-slate-50 focus:bg-white"
+                  />
+                  {addModalSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setAddModalSearch('')}
+                      className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Category Filter Pills */}
+              <div className="flex flex-wrap items-center gap-1.5 text-xs overflow-x-auto pb-1">
+                <span className="text-[11px] font-bold text-slate-400 uppercase mr-1">Kategori:</span>
+                {[
+                  { id: 'ALL', label: 'Semua' },
+                  { id: 'JTR', label: 'JTR (Jaringan TR)' },
+                  { id: 'JTM', label: 'JTM (Jaringan TM)' },
+                  { id: 'SKUTR', label: 'SKUTR' },
+                  { id: 'GARDU', label: 'Gardu Trafo' },
+                  { id: 'TIANG', label: 'Tiang' },
+                  { id: 'SR', label: 'SR & APP' },
+                  { id: 'BONGKAR', label: 'Pekerjaan Bongkar', isSpecial: true },
+                  { id: 'SWITCHING', label: 'Switching (LBS/CO)' },
+                  { id: 'SKUR', label: 'Skur / Guy Wire' },
+                  { id: 'GROUNDING', label: 'Grounding' },
+                ].map((cat) => {
+                  const isActive = addModalCategory === cat.id;
+                  return (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setAddModalCategory(cat.id)}
+                      className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition cursor-pointer ${
+                        isActive
+                          ? cat.isSpecial
+                            ? 'bg-rose-600 text-white shadow-2xs'
+                            : 'bg-indigo-600 text-white shadow-2xs'
+                          : cat.isSpecial
+                          ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
+                      }`}
+                    >
+                      {cat.isSpecial && <span className="mr-1">⚡</span>}
+                      {cat.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Modal Body: List of Items */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
+              {addModalMode === 'PACKAGE' ? (
+                /* Mode 1: Paket Konstruksi */
+                filteredModalPackages.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500">
+                    <p className="text-sm font-bold">Tidak ada paket konstruksi yang cocok.</p>
+                    <p className="text-xs text-slate-400 mt-1">Coba gunakan kata kunci pencarian atau kategori lain.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {filteredModalPackages.map((pkg) => {
+                      const isBongkar = pkg.category === 'BONGKAR' || pkg.code.startsWith('BKR');
+                      return (
+                        <div
+                          key={pkg.code}
+                          className={`p-3.5 rounded-xl border bg-white shadow-xs hover:border-indigo-400 transition flex flex-col justify-between ${
+                            isBongkar ? 'border-rose-200 bg-rose-50/20' : 'border-slate-200'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-start justify-between gap-2">
+                              <span
+                                className={`px-2 py-0.5 rounded-md font-black text-xs ${
+                                  isBongkar
+                                    ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                    : 'bg-amber-100 text-amber-900 border border-amber-300'
+                                }`}
+                              >
+                                [{pkg.code}]
+                              </span>
+                              <span className="text-[10px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                                {pkg.category}
+                              </span>
+                            </div>
+                            <h4 className="text-xs font-black text-slate-900 mt-1.5">{pkg.name}</h4>
+                            <p className="text-[11px] text-slate-600 line-clamp-2 mt-0.5">{pkg.description}</p>
+
+                            {/* Detail Komponen Material */}
+                            <div className="mt-2 pt-2 border-t border-slate-100">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase">
+                                Rincian Material ({pkg.components.length} Komponen per Set):
+                              </span>
+                              <div className="mt-1 space-y-0.5 max-h-24 overflow-y-auto pr-1">
+                                {pkg.components.map((comp, cIdx) => {
+                                  const khs = KHS_MASTER_CATALOG[comp.khsId];
+                                  return (
+                                    <div
+                                      key={cIdx}
+                                      className="flex items-center justify-between text-[10px] text-slate-700 bg-slate-50 px-1.5 py-0.5 rounded"
+                                    >
+                                      <span className="truncate max-w-[190px]">
+                                        ↳ {khs?.uraian || comp.khsId}
+                                      </span>
+                                      <span className="font-mono font-bold text-slate-900 shrink-0">
+                                        {comp.qty} {khs?.satuan || 'Bh'}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Quick Add Form */}
+                          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold text-slate-600">Qty Set:</span>
+                              <input
+                                type="number"
+                                min={1}
+                                defaultValue={1}
+                                id={`qty-input-${pkg.code}`}
+                                className="w-14 px-2 py-1 border border-slate-300 rounded-lg text-center font-bold text-xs bg-white"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const input = document.getElementById(
+                                  `qty-input-${pkg.code}`
+                                ) as HTMLInputElement | null;
+                                const qty = Math.max(1, Number(input?.value) || 1);
+                                handleAddPackageToRab(pkg.code, qty);
+                              }}
+                              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-white font-extrabold text-xs shadow-2xs cursor-pointer transition ${
+                                isBongkar
+                                  ? 'bg-rose-600 hover:bg-rose-700'
+                                  : 'bg-indigo-600 hover:bg-indigo-700'
+                              }`}
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              + Tambah ke RAB
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              ) : (
+                /* Mode 2: Material Satuan & Jasa Pembongkaran KHS */
+                filteredModalKhs.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500">
+                    <p className="text-sm font-bold">Tidak ada item KHS atau jasa bongkar yang cocok.</p>
+                    <p className="text-xs text-slate-400 mt-1">Coba gunakan kata kunci pencarian atau kategori lain.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between bg-amber-50 border border-amber-200 px-3 py-2 rounded-xl text-xs text-amber-900">
+                      <span>
+                        <strong>Target Seksi RAB:</strong> Masukkan item ini ke Seksi:
+                      </span>
+                      <select
+                        value={addModalSection}
+                        onChange={(e) => setAddModalSection(e.target.value as RabRomanSection)}
+                        className="px-2 py-1 border border-amber-300 rounded-lg font-bold bg-white text-xs"
+                      >
+                        {RAB_ROMAN_SECTIONS.map((s) => (
+                          <option key={s.code} value={s.code}>
+                            Seksi {s.code}. {s.title}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="divide-y divide-slate-200 bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+                      {filteredModalKhs.map((k) => {
+                        const isBongkar =
+                          k.section === 'XV' ||
+                          k.section === 'XIV' ||
+                          k.id.startsWith('JASA_BONGKAR') ||
+                          k.uraian.toLowerCase().includes('bongkar');
+
+                        return (
+                          <div
+                            key={k.id}
+                            className={`p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 hover:bg-slate-50 transition ${
+                              isBongkar ? 'bg-rose-50/30' : ''
+                            }`}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${
+                                    isBongkar
+                                      ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                      : 'bg-slate-100 text-slate-700'
+                                  }`}
+                                >
+                                  {isBongkar ? '⚡ BONGKAR' : `Seksi ${k.section || 'KHS'}`}
+                                </span>
+                                <span className="font-mono text-[11px] font-bold text-slate-500">
+                                  {k.id}
+                                </span>
+                                <span className="text-[10px] font-extrabold uppercase px-1 rounded bg-slate-100 text-slate-600">
+                                  {k.gol}
+                                </span>
+                              </div>
+                              <h5 className="text-xs font-bold text-slate-900 mt-0.5 leading-snug">
+                                {k.uraian}
+                              </h5>
+                              <p className="text-[11px] text-slate-500 mt-0.5">
+                                Harga Satuan KHS: <strong className="text-slate-800">Rp {k.hargaSatuan.toLocaleString('id-ID')}</strong> / {k.satuan}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs text-slate-600 font-bold">Vol:</span>
+                                <input
+                                  type="number"
+                                  min={0.1}
+                                  step={0.1}
+                                  defaultValue={1}
+                                  id={`vol-input-${k.id}`}
+                                  className="w-16 px-2 py-1 border border-slate-300 rounded-lg text-center font-bold text-xs bg-white"
+                                />
+                                <span className="text-xs text-slate-500 font-semibold">{k.satuan}</span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const input = document.getElementById(
+                                    `vol-input-${k.id}`
+                                  ) as HTMLInputElement | null;
+                                  const vol = Math.max(0.1, Number(input?.value) || 1);
+                                  const targetSec = isBongkar ? 'XV' : addModalSection;
+                                  handleAddKhsItemToRab(k.id, vol, targetSec);
+                                }}
+                                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-white font-extrabold text-xs shadow-2xs cursor-pointer transition ${
+                                  isBongkar
+                                    ? 'bg-rose-600 hover:bg-rose-700'
+                                    : 'bg-indigo-600 hover:bg-indigo-700'
+                                }`}
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                {isBongkar ? '+ Bongkar (Seksi XV)' : '+ Masukkan'}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3 border-t border-slate-200 bg-white flex items-center justify-between text-xs">
+              <span className="text-slate-500 font-medium">
+                Pilih paket atau item untuk langsung menambahkannya ke tabel RAB dengan perhitungan harga resmi PLN UID Jawa Tengah.
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowAddRabModal(false)}
+                className="px-4 py-1.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-bold cursor-pointer transition"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
