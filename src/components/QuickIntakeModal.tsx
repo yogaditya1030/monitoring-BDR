@@ -231,7 +231,7 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
     const descWork =
       keterangan.trim() ||
       (transaksi === 'PFK'
-        ? `PFK ${kategoriPfk}: Permohonan daya ${dayaBaru.toLocaleString('id-ID')} VA (${tarif})`
+        ? `PFK ${kategoriPfk}: ${peruntukan.trim()}`
         : `${transaksi} daya ${dayaBaru.toLocaleString('id-ID')} VA (${tarif})`);
 
     const mapsLink = `https://www.google.com/maps?q=${coordinates.replace(/\s/g, '')}`;
@@ -247,9 +247,9 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
       transaksi,
       kategoriPfk: transaksi === 'PFK' ? kategoriPfk : undefined,
       nomorMeterEksisting: nomorMeterEksisting.trim(),
-      dayaLama: transaksi === 'PB' ? 0 : Number(dayaLama),
-      dayaBaru: Number(dayaBaru),
-      tarif,
+      dayaLama: transaksi === 'PB' || transaksi === 'PFK' ? 0 : Number(dayaLama),
+      dayaBaru: transaksi === 'PFK' ? 0 : Number(dayaBaru),
+      tarif: transaksi === 'PFK' ? '-' : tarif,
       meter,
       kontakPerson: kontakPerson.trim(),
       nomorKtp: nomorKtp.trim(),
@@ -707,97 +707,96 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
             </div>
           )}
 
-          {/* Step 5: Spesifikasi Daya & Simulasi Tarif (SIMULASI BIAYA DIHILANGKAN UTK PFK) */}
-          <div className="space-y-4">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-              5. Spesifikasi Daya & Tarif
-            </h3>
+          {/* Step 5: Spesifikasi Daya & Tarif (DIHILANGKAN JIKA MEMILIH PFK) */}
+          {transaksi === 'PFK' ? (
+            <div className="bg-amber-50 border border-amber-300 rounded-lg p-3.5 flex items-start gap-3">
+              <Info className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+              <div className="text-xs text-amber-950">
+                <div className="font-bold">
+                  Biaya PFK ({kategoriPfk}) Disusun Melalui RAB Lapangan
+                </div>
+                <div className="text-amber-800 mt-0.5">
+                  Permohonan PFK tidak memerlukan input spesifikasi Daya &amp; Tarif serta tidak menggunakan simulasi Biaya Penyambungan (BP) standar. Biaya dihitung secara riil oleh <strong>Tim Teknik ULP Borobudur</strong> melalui survei teknis lapangan dan penyusunan Rencana Anggaran Biaya (RAB).
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                5. Spesifikasi Daya &amp; Tarif
+              </h3>
 
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-              {transaksi === 'PD' && (
-                <div>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                {transaksi === 'PD' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Daya Lama (VA)
+                    </label>
+                    <select
+                      value={dayaLama}
+                      onChange={(e) => setDayaLama(Number(e.target.value))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                    >
+                      {dayaOptions.map((d) => (
+                        <option key={`lama-${d}`} value={d}>
+                          {d.toLocaleString('id-ID')} VA
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className={transaksi === 'PD' ? 'col-span-1' : 'col-span-2'}>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Daya Lama (VA)
+                    Daya Baru Diajukan (VA) *
                   </label>
                   <select
-                    value={dayaLama}
-                    onChange={(e) => setDayaLama(Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                    value={dayaBaru}
+                    onChange={(e) => setDayaBaru(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white font-medium"
                   >
                     {dayaOptions.map((d) => (
-                      <option key={`lama-${d}`} value={d}>
-                        {d.toLocaleString('id-ID')} VA
+                      <option key={`baru-${d}`} value={d}>
+                        {d >= 1000 ? `${d / 1000} kVA (${d.toLocaleString('id-ID')} VA)` : `${d} VA`}
                       </option>
                     ))}
                   </select>
                 </div>
-              )}
 
-              <div className={transaksi === 'PD' ? 'col-span-1' : 'col-span-2'}>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Daya Baru Diajukan (VA) *
-                </label>
-                <select
-                  value={dayaBaru}
-                  onChange={(e) => setDayaBaru(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white font-medium"
-                >
-                  {dayaOptions.map((d) => (
-                    <option key={`baru-${d}`} value={d}>
-                      {d >= 1000 ? `${d / 1000} kVA (${d.toLocaleString('id-ID')} VA)` : `${d} VA`}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Golongan Tarif</label>
+                  <select
+                    value={tarif}
+                    onChange={(e) => setTarif(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                  >
+                    <option value="R-1/TR">R-1/TR (Rumah Tangga Kecil)</option>
+                    <option value="R-2/TR">R-2/TR (Rumah Tangga Sedang)</option>
+                    <option value="B-1/TR">B-1/TR (Bisnis Kecil)</option>
+                    <option value="B-2/TR">B-2/TR (Bisnis Menengah)</option>
+                    <option value="I-1/TR">I-1/TR (Industri Kecil)</option>
+                    <option value="I-2/TR">I-2/TR (Industri Menengah)</option>
+                    <option value="I-3/TM">I-3/TM (Industri TM)</option>
+                    <option value="S-1/TR">S-1/TR (Sosial Murni)</option>
+                    <option value="S-2/TR">S-2/TR (Sosial Lembaga)</option>
+                    <option value="P-1/TR">P-1/TR (Pemerintah)</option>
+                  </select>
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Golongan Tarif</label>
-                <select
-                  value={tarif}
-                  onChange={(e) => setTarif(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
-                >
-                  <option value="R-1/TR">R-1/TR (Rumah Tangga Kecil)</option>
-                  <option value="R-2/TR">R-2/TR (Rumah Tangga Sedang)</option>
-                  <option value="B-1/TR">B-1/TR (Bisnis Kecil)</option>
-                  <option value="B-2/TR">B-2/TR (Bisnis Menengah)</option>
-                  <option value="I-1/TR">I-1/TR (Industri Kecil)</option>
-                  <option value="I-2/TR">I-2/TR (Industri Menengah)</option>
-                  <option value="I-3/TM">I-3/TM (Industri TM)</option>
-                  <option value="S-1/TR">S-1/TR (Sosial Murni)</option>
-                  <option value="S-2/TR">S-2/TR (Sosial Lembaga)</option>
-                  <option value="P-1/TR">P-1/TR (Pemerintah)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Tipe Meter</label>
-                <select
-                  value={meter}
-                  onChange={(e) => setMeter(e.target.value as 'PRABAYAR' | 'PASKA BAYAR')}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
-                >
-                  <option value="PRABAYAR">Prabayar (Token Listrik)</option>
-                  <option value="PASKA BAYAR">Paska Bayar (Tagihan Bulanan)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Simulasi Biaya: HILANGKAN UNTUK PFK SESUAI INSTRUKSI USER */}
-            {transaksi === 'PFK' ? (
-              <div className="bg-amber-50 border border-amber-300 rounded-lg p-3.5 flex items-start gap-3">
-                <Info className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
-                <div className="text-xs text-amber-950">
-                  <div className="font-bold">
-                    Biaya PFK ({kategoriPfk}) Disusun Melalui RAB Lapangan
-                  </div>
-                  <div className="text-amber-800 mt-0.5">
-                    Permohonan PFK tidak menggunakan simulasi Biaya Penyambungan (BP) standar. Biaya akan dihitung secara riil oleh <strong>Tim Teknik ULP Borobudur</strong> melalui survei teknis lapangan dan penyusunan Rencana Anggaran Biaya (RAB).
-                  </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Tipe Meter</label>
+                  <select
+                    value={meter}
+                    onChange={(e) => setMeter(e.target.value as 'PRABAYAR' | 'PASKA BAYAR')}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                  >
+                    <option value="PRABAYAR">Prabayar (Token Listrik)</option>
+                    <option value="PASKA BAYAR">Paska Bayar (Tagihan Bulanan)</option>
+                  </select>
                 </div>
               </div>
-            ) : (
-              /* Live Fee Breakdown untuk PB dan PD */
+
+              {/* Live Fee Breakdown untuk PB dan PD */}
               <div className="bg-sky-50 border border-sky-200 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-bold text-sky-950 flex items-center gap-1.5">
@@ -833,10 +832,10 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
                   </div>
                 </div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
-          {/* Step 6: Upload Surat Permohonan Pelanggan (Mendukung Multi-Halaman) */}
+          {/* Step 6: Upload Surat Permohonan Pelanggan (Mendukung Multi-Halaman: PDF, Foto, Scan, atau File Apapun) */}
           <div className="pt-2 border-t border-slate-200">
             <label className="block text-xs font-semibold text-slate-700 mb-1">
               Upload Surat Permohonan Pelanggan (Bisa Lebih dari 1 Halaman)
@@ -846,7 +845,7 @@ export const QuickIntakeModal: React.FC<QuickIntakeModalProps> = ({
                 type="file"
                 id="file-upload"
                 multiple
-                accept="image/*,.pdf"
+                accept="image/*,.pdf,*/*"
                 className="hidden"
                 onChange={(e) => {
                   const files: File[] = Array.from(e.target.files || []);

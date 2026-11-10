@@ -68,6 +68,13 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
   const [noPkVendor, setNoPkVendor] = useState(item.noPkVendor || '');
   const [keteranganPekerjaan, setKeteranganPekerjaan] = useState(item.keteranganPekerjaan || '');
   const [surveyRabDesign, setSurveyRabDesign] = useState<SurveyRabDesign | undefined>(item.surveyRabDesign);
+  const [isDrawingSaved, setIsDrawingSaved] = useState<boolean>(
+    Boolean(
+      item.surveyRabDesign &&
+        ((item.surveyRabDesign.nodes && item.surveyRabDesign.nodes.length > 0) ||
+          (item.surveyRabDesign.rabItems && item.surveyRabDesign.rabItems.length > 0))
+    )
+  );
 
   React.useEffect(() => {
     setPetugasSurvei(item.petugasSurvei || '');
@@ -78,23 +85,27 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
     setNoPkVendor(item.noPkVendor || '');
     setKeteranganPekerjaan(item.keteranganPekerjaan || '');
     setSurveyRabDesign(item.surveyRabDesign);
+    setIsDrawingSaved(
+      Boolean(
+        item.surveyRabDesign &&
+          ((item.surveyRabDesign.nodes && item.surveyRabDesign.nodes.length > 0) ||
+            (item.surveyRabDesign.rabItems && item.surveyRabDesign.rabItems.length > 0))
+      )
+    );
     setNextStatus(item.status);
   }, [item.id]);
 
   const hasSurveyData = Boolean(
-    (surveyRabDesign?.nodes && surveyRabDesign.nodes.length > 0) ||
-    (item.surveyRabDesign?.nodes && item.surveyRabDesign.nodes.length > 0) ||
-    (petugasSurvei.trim().length > 0 && petugasSurvei.trim() !== '-') ||
-    nomorTiang.trim().length > 0 ||
-    nomorGardu.trim().length > 0 ||
-    Boolean(item.tglSurvei) ||
-    rab > 0 ||
-    item.rab > 0
+    isDrawingSaved &&
+      ((surveyRabDesign?.nodes && surveyRabDesign.nodes.length > 0) ||
+        (surveyRabDesign?.rabItems && surveyRabDesign.rabItems.length > 0) ||
+        (item.surveyRabDesign?.nodes && item.surveyRabDesign.nodes.length > 0) ||
+        (item.surveyRabDesign?.rabItems && item.surveyRabDesign.rabItems.length > 0))
   );
   const surveyNodeCount =
     surveyRabDesign?.nodes?.length ||
     item.surveyRabDesign?.nodes?.length ||
-    (nomorTiang ? 1 : 0);
+    0;
 
   // Form State - K3L
   const [workingPermit, setWorkingPermit] = useState(item.workingPermit || `WP-K3L-${new Date().getFullYear()}-${item.id.slice(0, 4).toUpperCase()}`);
@@ -262,6 +273,13 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
       }
     }
 
+    if (
+      updated.surveyRabDesign &&
+      ((updated.surveyRabDesign.nodes && updated.surveyRabDesign.nodes.length > 0) ||
+        (updated.surveyRabDesign.rabItems && updated.surveyRabDesign.rabItems.length > 0))
+    ) {
+      setIsDrawingSaved(true);
+    }
     onSave(updated);
     if (shouldClose) {
       onClose();
@@ -276,11 +294,13 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-1.5 sm:p-3 bg-slate-950/60 backdrop-blur-xs overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-1 sm:p-2 bg-slate-950/60 backdrop-blur-xs overflow-hidden">
       <div
         className={`bg-white rounded-xl shadow-2xl border border-slate-200 w-full ${
-          activeTab === 'teknik' ? 'max-w-6xl' : 'max-w-4xl'
-        } max-h-[96vh] sm:max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 transition-all`}
+          activeTab === 'teknik'
+            ? 'w-[98vw] max-w-[98vw] h-[97vh] max-h-[97vh]'
+            : 'max-w-5xl max-h-[94vh]'
+        } flex flex-col overflow-hidden`}
       >
         {/* Header */}
         <div className="shrink-0 bg-sky-900 text-white px-3.5 sm:px-6 py-2.5 sm:py-3.5 flex items-center justify-between gap-2">
@@ -611,6 +631,7 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
                 }}
                 onApplyRabDesign={(design, grandTotalRab, summaryNotes) => {
                   setSurveyRabDesign(design);
+                  setIsDrawingSaved(true);
                   setRab(grandTotalRab);
                   if (grandTotalRab > 0) {
                     setNextStatus('RAB');
@@ -622,6 +643,7 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
                 }}
                 onDirectSave={(design, grandTotalRab, summaryNotes) => {
                   setSurveyRabDesign(design);
+                  setIsDrawingSaved(true);
                   setRab(grandTotalRab);
                   const effectivePetugas = petugasSurvei.trim() || design.digambarOleh || item.petugasSurvei || 'Bambang Kusuma (Teknik)';
                   const effectiveGardu = nomorGardu.trim() || (design.nodes?.find(n => n.kind.includes('GARDU'))?.kodeTiang || '') || item.nomorGardu || 'GD-BBD-018';

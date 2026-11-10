@@ -27,6 +27,7 @@ import {
   calculateGeodesicDistanceMeters,
   generateRabItemsFromSurvey,
   updateRabPackageHeaderVolume,
+  normalizeRabPackageItems,
   calculateRabRowBreakdown,
   calculateRabSummary,
   groupRabItemsByRomanSection,
@@ -38,6 +39,8 @@ import {
   getCableVisualStyle,
   buildPhaseSlashSvg,
   buildBongkarXSvg,
+  resolveNodeDrawingSymbol,
+  buildNodeMarkerSvg,
   isNodeMarkedBongkar,
   isSpanMarkedBongkar,
   isCableMarkedBongkar,
@@ -49,6 +52,8 @@ import {
   getPhaseSlashSymbol,
   getStaggeredPhaseTickRatio,
   getCableScreenAngleDeg,
+  getActiveLegendItems,
+  formatDateDdMmYyyy,
 } from '../utils/rabCalculator';
 import { parseCoordinate } from '../utils/plnValidation';
 import {
@@ -63,6 +68,7 @@ import {
   Trash2,
   Plus,
   Printer,
+  Download,
   Maximize2,
   Minimize2,
   Layers,
@@ -125,17 +131,19 @@ const CONDUCTOR_OPTIONS: Array<{
   value: SurveySpanConductorType;
   label: string;
 }> = [
-  { value: 'NFA2X-T 3x70+1x70', label: '[JTR] NFA2X-T 3x70+1x70 mm²' },
-  { value: 'NFA2X-T 3x70+1x50', label: '[JTR] NFA2X-T 3x70+1x50 mm²' },
-  { value: 'NFA2X-T 3x35+1x35', label: '[JTR] NFA2X-T 3x35+1x35 mm²' },
-  { value: 'NFA2X-T 2x70', label: '[JTR] NFA2X-T 2x70 mm² (1Ø)' },
-  { value: 'NFA2X-T 2x35', label: '[JTR] NFA2X-T 2x35 mm² (1Ø)' },
+  { value: 'NFA2X-T 3x70+1x70', label: '[JTR 3 Fasa ////] NFA2X-T 3x70+1x70 mm²' },
+  { value: 'NFA2X-T 3x70+1x50', label: '[JTR 3 Fasa ////] NFA2X-T 3x70+1x50 mm²' },
+  { value: 'NFA2X-T 3x35+1x35', label: '[JTR 3 Fasa ////] NFA2X-T 3x35+1x35 mm²' },
+  { value: 'NFA2X-T 2x70', label: '[JTR 1 Fasa ///] NFA2X-T 2x70 mm²' },
+  { value: 'NFA2X-T 2x35', label: '[JTR 1 Fasa ///] NFA2X-T 2x35 mm²' },
   { value: 'AAAC 70', label: '[JTM] AAAC 70 mm² (SUTM 20kV)' },
   { value: 'AAAC 150', label: '[JTM] AAAC 150 mm² (SUTM 20kV)' },
   { value: 'AAAC/S 150', label: '[JTM] AAAC/S 150 mm² (SUTM 20kV)' },
-  { value: 'MVTIC 3x240+N95', label: '[JTM] MVTIC 3x240+N95 mm² (SKUTM)' },
-  { value: 'NFA2X 2x16', label: '[SR] TIC / NFA2X 2x16 mm² (1Ø)' },
-  { value: 'NFA2X 4x16', label: '[SR] TIC / NFA2X 4x16 mm² (3Ø)' },
+  { value: 'MVTIC 3x240+N95', label: '[MVTIC -..-..-] MVTIC 3x240+N95 mm²' },
+  { value: 'VANG_NET', label: '[Vang Net Biru] Vang Net (Jaring Pengaman)' },
+  { value: 'NFA2X 2x10', label: '[SR 1 Fasa ///] SR 2x10 mm²' },
+  { value: 'NFA2X 2x16', label: '[SR 1 Fasa ///] TIC / NFA2X 2x16 mm²' },
+  { value: 'NFA2X 4x16', label: '[SR 3 Fasa ////] TIC / NFA2X 4x16 mm²' },
 ];
 
 export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
@@ -184,7 +192,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   );
   const [rabItems, setRabItems] = useState<RabLineItem[]>(() => {
     if (initialDesign?.rabItems && initialDesign.rabItems.length > 0) {
-      return initialDesign.rabItems;
+      return normalizeRabPackageItems(initialDesign.rabItems);
     }
     if (initialDesign?.nodes && initialDesign.nodes.length > 0) {
       return generateRabItemsFromSurvey({
@@ -224,6 +232,10 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   const [polePlacementKind, setPolePlacementKind] = useState<
     'TIANG_RENCANA' | 'TIANG_EKSISTING'
   >('TIANG_RENCANA');
+  const [selectedPoleMaterial, setSelectedPoleMaterial] = useState<
+    'BETON' | 'BESI'
+  >('BETON');
+  const [selectedTrafoPhase, setSelectedTrafoPhase] = useState<1 | 3>(3);
   const [selectedConductorType, setSelectedConductorType] =
     useState<SurveySpanConductorType>('NFA2X-T 3x70+1x70');
   const [selectedPhaseCount, setSelectedPhaseCount] =
@@ -243,6 +255,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   const [showInspector, setShowInspector] = useState<boolean>(true);
   const [showLegend, setShowLegend] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [isToolbarCollapsed, setIsToolbarCollapsed] = useState<boolean>(false);
   const [tileLayerMode, setTileLayerMode] = useState<'street' | 'satellite'>(
     'street'
   );
@@ -337,6 +350,44 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   );
   const [failedImageIndices, setFailedImageIndices] = useState<Record<number, boolean>>({});
 
+  // Convert data:application/pdf;base64,... URLs into browser Blob URLs so Chromium's PDF viewer renders them inside Dokumen Survey
+  const [pdfBlobUrls, setPdfBlobUrls] = useState<Record<number, string>>({});
+  useEffect(() => {
+    const createdUrls: string[] = [];
+    const nextMap: Record<number, string> = {};
+
+    attachedSuratPages.forEach((pageData, idx) => {
+      if (!pageData || pageData.startsWith('FORMAL_PAGE_')) return;
+      if (pageData.startsWith('data:application/pdf') || (!pageData.startsWith('data:image/') && pageData.startsWith('data:'))) {
+        try {
+          const commaIdx = pageData.indexOf(',');
+          if (commaIdx !== -1) {
+            const meta = pageData.slice(0, commaIdx);
+            const base64 = pageData.slice(commaIdx + 1);
+            const mimeMatch = meta.match(/^data:([^;]+)/);
+            const mimeType = mimeMatch ? mimeMatch[1] : 'application/pdf';
+            const binary = window.atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+              bytes[i] = binary.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: mimeType });
+            const blobUrl = URL.createObjectURL(blob);
+            createdUrls.push(blobUrl);
+            nextMap[idx] = blobUrl;
+          }
+        } catch {
+          // fallback to raw data URL if decoding fails
+        }
+      }
+    });
+
+    setPdfBlobUrls(nextMap);
+    return () => {
+      createdUrls.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, [attachedSuratPages]);
+
   const handleUploadSuratPage = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -399,7 +450,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     setNodes(initialDesign?.nodes || []);
     setSpans(initialDesign?.spans || []);
     if (initialDesign?.rabItems && initialDesign.rabItems.length > 0) {
-      setRabItems(initialDesign.rabItems);
+      setRabItems(normalizeRabPackageItems(initialDesign.rabItems));
     } else if (initialDesign?.nodes && initialDesign.nodes.length > 0) {
       setRabItems(
         generateRabItemsFromSurvey({
@@ -436,7 +487,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         ? new Date(initialDesign.updatedAt).toLocaleTimeString('id-ID')
         : null
     );
-  }, [item.id]);
+  }, [item.id, item.suratPermohonanDataUrl, item.suratPermohonanPages]);
 
   // Keep a stable ref to onAutoSyncDesign so it never causes a re-render loop
   const onAutoSyncRef = useRef(onAutoSyncDesign);
@@ -462,8 +513,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       },
       digambarOleh: petugasSurvei || 'TIM SURVEI TEKNIK',
       direncanakanOleh: petugasSurvei || 'TIM SURVEI TEKNIK',
-      diperiksaOleh: 'TL TEKNIK',
-      disetujuiOleh: 'MANAJER',
+      diperiksaOleh: 'BAREP ARIYANTO',
+      disetujuiOleh: 'ARI MULYO TRANFIANTO',
       nodes,
       spans,
       rabItems,
@@ -513,6 +564,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     spans,
     activeTool,
     polePlacementKind,
+    selectedPoleMaterial,
+    selectedTrafoPhase,
     selectedConductorType,
     selectedPhaseCount,
     selectedStatusJaringan,
@@ -532,6 +585,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       spans,
       activeTool,
       polePlacementKind,
+      selectedPoleMaterial,
+      selectedTrafoPhase,
       selectedConductorType,
       selectedPhaseCount,
       selectedStatusJaringan,
@@ -549,6 +604,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     spans,
     activeTool,
     polePlacementKind,
+    selectedPoleMaterial,
+    selectedTrafoPhase,
     selectedConductorType,
     selectedPhaseCount,
     selectedStatusJaringan,
@@ -606,11 +663,37 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const isEditingInput =
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        Boolean(target?.isContentEditable);
+
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
-        const tag = (e.target as HTMLElement)?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        if (isEditingInput) return;
         e.preventDefault();
         handleUndo();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (isEditingInput) return;
+        const st = stateRef.current;
+        if (st.selectedNodeId) {
+          e.preventDefault();
+          const nextNodes = st.nodes.filter((n) => n.id !== st.selectedNodeId);
+          const nextSpans = st.spans.filter(
+            (s) =>
+              s.fromNodeId !== st.selectedNodeId &&
+              s.toNodeId !== st.selectedNodeId
+          );
+          commitGraphUpdate(nextNodes, nextSpans, true);
+          setSelectedNodeId(null);
+        } else if (st.selectedSpanId) {
+          e.preventDefault();
+          const nextSpans = st.spans.filter((s) => s.id !== st.selectedSpanId);
+          commitGraphUpdate(st.nodes, nextSpans, true);
+          setSelectedSpanId(null);
+        }
       } else if (e.key === 'Escape' && isFullscreen) {
         setIsFullscreen(false);
       }
@@ -629,49 +712,112 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
   // Filtered construction catalog for Inspector
   const filteredCatalog = useMemo(() => {
-    const q = constructionSearch.trim().toLowerCase();
+    const rawQ = constructionSearch.trim().toLowerCase();
+    // Fasilitasi sinonim Anchor = Skur: ketika pengguna mengetik 'skur' atau 'anchor', sistem mencocokkan kedua istilah tersebut
+    const isSkurSearch = rawQ.includes('skur') || rawQ.includes('anchor');
     return CONSTRUCTION_PACKAGES_CATALOG.filter((pkg) => {
       const catOk =
-        selectedCategory === 'ALL' || pkg.category === selectedCategory;
+        selectedCategory === 'ALL' ||
+        pkg.category === selectedCategory ||
+        (selectedCategory === 'SKUR' && pkg.category === 'ANCHOR') ||
+        (selectedCategory === 'ANCHOR' && pkg.category === 'SKUR');
       if (!catOk) return false;
-      if (!q) return true;
-      return (
-        pkg.code.toLowerCase().includes(q) ||
-        pkg.name.toLowerCase().includes(q) ||
-        pkg.description.toLowerCase().includes(q)
-      );
+      if (!rawQ) return true;
+
+      const codeLower = pkg.code.toLowerCase();
+      const nameLower = pkg.name.toLowerCase();
+      const descLower = pkg.description.toLowerCase();
+      const catLower = pkg.category.toLowerCase();
+
+      if (
+        codeLower.includes(rawQ) ||
+        nameLower.includes(rawQ) ||
+        descLower.includes(rawQ) ||
+        catLower.includes(rawQ)
+      ) {
+        return true;
+      }
+
+      if (isSkurSearch) {
+        if (
+          codeLower.includes('skur') ||
+          codeLower.includes('anchor') ||
+          nameLower.includes('skur') ||
+          nameLower.includes('anchor') ||
+          nameLower.includes('down guy') ||
+          nameLower.includes('guy wire') ||
+          descLower.includes('skur') ||
+          descLower.includes('anchor') ||
+          catLower === 'skur' ||
+          catLower === 'anchor'
+        ) {
+          return true;
+        }
+      }
+
+      return false;
     });
   }, [constructionSearch, selectedCategory]);
 
   // Filtered packages for Add RAB Item Modal
   const filteredModalPackages = useMemo(() => {
-    const q = addModalSearch.trim().toLowerCase();
+    const rawQ = addModalSearch.trim().toLowerCase();
+    const isSkurSearch = rawQ.includes('skur') || rawQ.includes('anchor');
     return CONSTRUCTION_PACKAGES_CATALOG.filter((pkg) => {
       const catOk =
         addModalCategory === 'ALL' ||
         pkg.category === addModalCategory ||
+        (addModalCategory === 'SKUR' && pkg.category === 'ANCHOR') ||
+        (addModalCategory === 'ANCHOR' && pkg.category === 'SKUR') ||
         (addModalCategory === 'BONGKAR' &&
           (pkg.category === 'BONGKAR' || pkg.code.startsWith('BKR')));
       if (!catOk) return false;
-      if (!q) return true;
-      return (
-        pkg.code.toLowerCase().includes(q) ||
-        pkg.name.toLowerCase().includes(q) ||
-        pkg.description.toLowerCase().includes(q) ||
+      if (!rawQ) return true;
+
+      const codeLower = pkg.code.toLowerCase();
+      const nameLower = pkg.name.toLowerCase();
+      const descLower = pkg.description.toLowerCase();
+      const catLower = pkg.category.toLowerCase();
+
+      const directMatch =
+        codeLower.includes(rawQ) ||
+        nameLower.includes(rawQ) ||
+        descLower.includes(rawQ) ||
+        catLower.includes(rawQ) ||
         pkg.components.some((c) => {
           const khs = KHS_MASTER_CATALOG[c.khsId];
           return (
-            c.khsId.toLowerCase().includes(q) ||
-            khs?.uraian.toLowerCase().includes(q)
+            c.khsId.toLowerCase().includes(rawQ) ||
+            khs?.uraian.toLowerCase().includes(rawQ)
           );
-        })
-      );
+        });
+
+      if (directMatch) return true;
+
+      if (isSkurSearch) {
+        if (
+          catLower === 'skur' ||
+          catLower === 'anchor' ||
+          codeLower.includes('skur') ||
+          codeLower.includes('anchor') ||
+          nameLower.includes('skur') ||
+          nameLower.includes('anchor') ||
+          nameLower.includes('guy') ||
+          descLower.includes('skur') ||
+          descLower.includes('anchor')
+        ) {
+          return true;
+        }
+      }
+
+      return false;
     });
   }, [addModalSearch, addModalCategory]);
 
   // Filtered KHS catalog (especially Jasa Pembongkaran Seksi XV) for Add RAB Item Modal
   const filteredModalKhs = useMemo(() => {
-    const q = addModalSearch.trim().toLowerCase();
+    const rawQ = addModalSearch.trim().toLowerCase();
+    const isSkurSearch = rawQ.includes('skur') || rawQ.includes('anchor');
     const allKhs = Object.values(KHS_MASTER_CATALOG);
     return allKhs.filter((k) => {
       let matchesCat = true;
@@ -691,8 +837,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         matchesCat = k.section === 'IV' || k.id.includes('LBS') || k.id.includes('ABSW');
       } else if (addModalCategory === 'SKUTM') {
         matchesCat = k.section === 'V' || k.section === 'VII';
-      } else if (addModalCategory === 'SKUR') {
-        matchesCat = k.section === 'VIII' || k.id.includes('SKUR') || k.id.includes('GUY');
+      } else if (addModalCategory === 'SKUR' || addModalCategory === 'ANCHOR') {
+        matchesCat = k.section === 'VIII' || k.id.includes('SKUR') || k.id.includes('GUY') || k.id.includes('ANCHOR');
       } else if (addModalCategory === 'GROUNDING') {
         matchesCat = k.section === 'IX' || k.id.includes('GROUNDING') || k.id.includes('ARRESTER');
       } else if (addModalCategory === 'JTR') {
@@ -703,13 +849,37 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         matchesCat = k.id.includes('SR') || k.id.includes('METER') || k.id.includes('MCB') || k.id.includes('APP');
       }
       if (!matchesCat) return false;
-      if (!q) return true;
-      return (
-        k.id.toLowerCase().includes(q) ||
-        k.uraian.toLowerCase().includes(q) ||
-        k.section.toLowerCase().includes(q) ||
-        k.gol.toLowerCase().includes(q)
-      );
+      if (!rawQ) return true;
+
+      const idLower = k.id.toLowerCase();
+      const uraianLower = k.uraian.toLowerCase();
+      const secLower = k.section.toLowerCase();
+      const golLower = k.gol.toLowerCase();
+
+      if (
+        idLower.includes(rawQ) ||
+        uraianLower.includes(rawQ) ||
+        secLower.includes(rawQ) ||
+        golLower.includes(rawQ)
+      ) {
+        return true;
+      }
+
+      if (isSkurSearch) {
+        if (
+          idLower.includes('skur') ||
+          idLower.includes('anchor') ||
+          idLower.includes('guy') ||
+          uraianLower.includes('skur') ||
+          uraianLower.includes('anchor') ||
+          uraianLower.includes('guy') ||
+          k.section === 'VIII'
+        ) {
+          return true;
+        }
+      }
+
+      return false;
     });
   }, [addModalSearch, addModalCategory]);
 
@@ -782,15 +952,22 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     const map = L.map(mapContainerRef.current, {
       center: initialMapCenter,
       zoom: 18,
+      maxZoom: 22,
       zoomControl: false,
     });
     L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
     const tile = L.tileLayer(
-      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      tileLayerMode === 'satellite'
+        ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+        : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       {
-        maxZoom: 20,
-        attribution: '© OpenStreetMap • Studio GIS PLN',
+        maxNativeZoom: 19,
+        maxZoom: 22,
+        attribution:
+          tileLayerMode === 'satellite'
+            ? '© Esri, Maxar, Earthstar Geographics • Studio GIS PLN'
+            : '© OpenStreetMap • Studio GIS PLN',
       }
     ).addTo(map);
 
@@ -840,6 +1017,9 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         id: `node-${Date.now()}-${idx}`,
         kodeTiang: defaultCode,
         kind,
+        poleMaterial: st.selectedPoleMaterial,
+        trafoPhase: isGardu ? st.selectedTrafoPhase : undefined,
+        hasFco: false,
         lat: Number(e.latlng.lat.toFixed(6)),
         lng: Number(e.latlng.lng.toFixed(6)),
         constructions: defaultConstructions,
@@ -866,10 +1046,12 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   useEffect(() => {
     if (!tileLayerRef.current) return;
     if (tileLayerMode === 'satellite') {
+      tileLayerRef.current.options.maxNativeZoom = 19;
       tileLayerRef.current.setUrl(
         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
       );
     } else {
+      tileLayerRef.current.options.maxNativeZoom = 19;
       tileLayerRef.current.setUrl(
         'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
       );
@@ -878,9 +1060,17 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
   // Invalidate map size when fullscreen toggles
   useEffect(() => {
-    if (leafletMapRef.current) {
-      setTimeout(() => leafletMapRef.current?.invalidateSize(), 120);
-    }
+    const map = leafletMapRef.current;
+    if (!map) return;
+    requestAnimationFrame(() => {
+      map.invalidateSize();
+    });
+    const t1 = setTimeout(() => map.invalidateSize(), 60);
+    const t2 = setTimeout(() => map.invalidateSize(), 220);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [isFullscreen]);
 
   // Render Nodes, Spans, Phase Ticks, Callout Boxes, and Bongkar X on Leaflet Map
@@ -909,16 +1099,22 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
           cIdx,
           cables.length
         );
+        const phaseCount = inferPhaseCountFromConductor(
+          cable.conductorType,
+          cable.phaseCount
+        );
         const vis = getCableVisualStyle(
           cable.jenisJaringan,
-          cable.statusJaringan
+          cable.statusJaringan,
+          cable.conductorType,
+          phaseCount
         );
         const cableBongkar = isCableMarkedBongkar(cable, span);
 
         const poly = L.polyline([fromCoord, toCoord], {
-          color: cableBongkar ? '#dc2626' : vis.strokeColor,
-          weight: isSelected ? vis.weight + 2 : vis.weight,
-          dashArray: cableBongkar ? '6, 4' : vis.dashArray,
+          color: vis.strokeColor,
+          weight: isSelected ? vis.weight + 0.8 : vis.weight,
+          dashArray: vis.dashArray,
           opacity: 0.95,
         }).addTo(group);
 
@@ -962,7 +1158,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
           setShowInspector(true);
         });
 
-        // Phase slash tick (/ or ///) along the cable
+        // Phase slash tick (/// for JTR 1 Fasa, //// for JTR 3 Fasa; none for JTM/MVTIC/Vang Net)
         const tickRatio = getStaggeredPhaseTickRatio(cIdx, cables.length);
         const tickLat =
           fromCoord[0] + (toCoord[0] - fromCoord[0]) * tickRatio;
@@ -974,25 +1170,25 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
           toCoord[0],
           toCoord[1]
         );
-        const phaseCount = inferPhaseCountFromConductor(
-          cable.conductorType,
-          cable.phaseCount
-        );
 
         const slashSvg = buildPhaseSlashSvg(
           phaseCount,
-          cableBongkar ? '#dc2626' : vis.strokeColor,
-          angleDeg
+          vis.strokeColor,
+          angleDeg,
+          cable.jenisJaringan,
+          cable.conductorType
         );
-        L.marker([tickLat, tickLng], {
-          interactive: false,
-          icon: L.divIcon({
-            className: 'pln-phase-tick-icon',
-            html: slashSvg,
-            iconSize: [28, 24],
-            iconAnchor: [14, 12],
-          }),
-        }).addTo(group);
+        if (slashSvg) {
+          L.marker([tickLat, tickLng], {
+            interactive: false,
+            icon: L.divIcon({
+              className: 'pln-phase-tick-icon',
+              html: slashSvg,
+              iconSize: [26, 16],
+              iconAnchor: [13, 8],
+            }),
+          }).addTo(group);
+        }
 
         // Red X symbol on cable if marked Bongkar
         if (cableBongkar) {
@@ -1016,21 +1212,17 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       const primaryCable = cables[0];
       const vis = getCableVisualStyle(
         primaryCable.jenisJaringan,
-        primaryCable.statusJaringan
+        primaryCable.statusJaringan,
+        primaryCable.conductorType,
+        primaryCable.phaseCount
       );
       const spanBongkar = isSpanMarkedBongkar(span);
-      const phaseSlash = getPhaseSlashSymbol(
-        inferPhaseCountFromConductor(
-          primaryCable.conductorType,
-          primaryCable.phaseCount
-        )
-      );
 
       const badgeHtml = `
         <div style="display:inline-flex;align-items:center;background:${
           isSelected ? '#1e1b4b' : 'rgba(255,255,255,0.96)'
-        };color:${isSelected ? '#ffffff' : spanBongkar ? '#dc2626' : '#0f172a'};border:1.5px solid ${
-        spanBongkar ? '#dc2626' : vis.strokeColor
+        };color:${isSelected ? '#ffffff' : '#0f172a'};border:1.5px solid ${
+        vis.strokeColor
       };border-radius:999px;padding:1px 6px;font-size:10px;font-weight:800;white-space:nowrap;box-shadow:0 1px 4px rgba(15,23,42,0.18);">
           <span>${span.distanceMeters}m${spanBongkar ? ' (BKR)' : ''}</span>
         </div>
@@ -1085,61 +1277,35 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       });
     });
 
-    // 2. Render Nodes (Poles / Gardu) & Draggable Callout Boxes
+    // 2. Render Nodes (Poles / Gardu / FCO / ABSW / Schoor) & Draggable Callout Boxes
     nodes.forEach((node, idx) => {
       const isPlanned =
         node.kind === 'TIANG_RENCANA' ||
         node.kind === 'GARDU_RENCANA' ||
         node.kind === 'TITIK_APP';
-      const isGardu =
-        node.kind === 'GARDU_RENCANA' || node.kind === 'GARDU_TRAFO';
       const isSelected = node.id === selectedNodeId;
       const isCableStart = node.id === cableStartNodeId;
       const nodeBongkar = isNodeMarkedBongkar(node);
 
-      const mainColor = isPlanned ? '#dc2626' : '#0f172a';
-      const ringColor = isCableStart
-        ? '#f59e0b'
-        : isSelected
-        ? '#4f46e5'
-        : '#ffffff';
-
-      // Pole / Gardu SVG marker
-      const markerSvg = isGardu
-        ? `<div style="position:relative;width:26px;height:26px;display:flex;align-items:center;justify-content:center;">
-            <svg width="26" height="26" viewBox="0 0 26 26">
-              <polygon points="13,2 24,22 2,22" fill="${mainColor}" stroke="${ringColor}" stroke-width="${
-            isSelected ? 3 : 2
-          }" />
-            </svg>
-            ${
-              nodeBongkar
-                ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;">${buildBongkarXSvg(
-                    24
-                  )}</div>`
-                : ''
-            }
-          </div>`
-        : `<div style="position:relative;width:22px;height:22px;display:flex;align-items:center;justify-content:center;">
-            <div style="width:16px;height:16px;border-radius:999px;background:${mainColor};border:${
-            isSelected || isCableStart ? '3px' : '2px'
-          } solid ${ringColor};box-shadow:0 2px 6px rgba(0,0,0,0.35);"></div>
-            ${
-              nodeBongkar
-                ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;">${buildBongkarXSvg(
-                    22
-                  )}</div>`
-                : ''
-            }
-          </div>`;
+      // Official PLN Engineering Symbol Marker (Tiang Beton ⊗, Tiang Besi ●, Trafo 1Ø ▲, Trafo 3Ø ▲▲▲, FCO S/, ABSW ──| |──, Schoor ↗)
+      const markerSvg = `<div style="position:relative;width:56px;height:56px;display:flex;align-items:center;justify-content:center;">
+        ${buildNodeMarkerSvg(node, isSelected || isCableStart)}
+        ${
+          nodeBongkar
+            ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;">${buildBongkarXSvg(
+                24
+              )}</div>`
+            : ''
+        }
+      </div>`;
 
       const poleMarker = L.marker([node.lat, node.lng], {
         draggable: true,
         icon: L.divIcon({
           className: 'pln-pole-node-marker',
           html: markerSvg,
-          iconSize: [24, 24],
-          iconAnchor: [12, 12],
+          iconSize: [56, 56],
+          iconAnchor: [28, 28],
         }),
       }).addTo(group);
 
@@ -1280,6 +1446,70 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         setSelectedSpanId(null);
         setShowInspector(true);
       });
+
+      // Interactive Schoor / Anchor Pull Direction Handles directly on the anchor arrows (tanpa bulatan kuning terpisah)
+      const nodeSym = resolveNodeDrawingSymbol(node);
+      if (nodeSym.hasSchoor) {
+        nodeSym.schoorAngleDegList.forEach((angleDeg, sIdx) => {
+          const rad = (angleDeg * Math.PI) / 180;
+          // Posisikan handle tepat di ujung / kepala panah anchor
+          const handleLat = node.lat - Math.sin(rad) * 0.00010;
+          const handleLng = node.lng + Math.cos(rad) * 0.00010;
+
+          // Hit area transparan di atas panah skur untuk memutar langsung pada panahnya
+          const schoorHandle = L.marker([handleLat, handleLng], {
+            draggable: true,
+            title: `Skur #${sIdx + 1} (${angleDeg}°): Tekan & geser untuk memutar arah tarikan`,
+            icon: L.divIcon({
+              className: 'pln-schoor-arrow-handle',
+              html: `<div style="width:22px;height:22px;cursor:grab;background:transparent;" title="Putar arah Skur #${sIdx + 1} (${angleDeg}°)"></div>`,
+              iconSize: [22, 22],
+              iconAnchor: [11, 11],
+            }),
+          }).addTo(group);
+
+          schoorHandle.on('drag', () => {
+            const pos = schoorHandle.getLatLng();
+            const dLat = pos.lat - node.lat;
+            const dLng = pos.lng - node.lng;
+            const liveAngle = Math.round((Math.atan2(-dLat, dLng) * 180) / Math.PI);
+            const st = stateRef.current;
+            const nextNodes = st.nodes.map((n) => {
+              if (n.id !== node.id) return n;
+              const curList = resolveNodeDrawingSymbol(n).schoorAngleDegList;
+              const nextList = [...curList];
+              nextList[sIdx] = liveAngle;
+              return {
+                ...n,
+                schoorAngleDeg: sIdx === 0 ? liveAngle : n.schoorAngleDeg,
+                schoorAngleDegList: nextList,
+              };
+            });
+            commitGraphUpdate(nextNodes, st.spans, false);
+          });
+
+          schoorHandle.on('dragend', () => {
+            const pos = schoorHandle.getLatLng();
+            const dLat = pos.lat - node.lat;
+            const dLng = pos.lng - node.lng;
+            const nextAngle = Math.round((Math.atan2(-dLat, dLng) * 180) / Math.PI);
+            const st = stateRef.current;
+            const nextNodes = st.nodes.map((n) => {
+              if (n.id !== node.id) return n;
+              const curList = resolveNodeDrawingSymbol(n).schoorAngleDegList;
+              const nextList = [...curList];
+              nextList[sIdx] = nextAngle;
+              return {
+                ...n,
+                schoorAngleDeg: sIdx === 0 ? nextAngle : n.schoorAngleDeg,
+                schoorAngleDegList: nextList,
+              };
+            });
+            commitGraphUpdate(nextNodes, st.spans, false);
+            setSelectedNodeId(node.id);
+          });
+        });
+      }
 
       // Callout Box with leader line
       const autoOffset = calculatePoleCalloutOffset(node, nodes, spans, idx);
@@ -1461,8 +1691,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       },
       digambarOleh: petugasSurvei || 'TIM SURVEI TEKNIK',
       direncanakanOleh: petugasSurvei || 'TIM SURVEI TEKNIK',
-      diperiksaOleh: 'TL TEKNIK',
-      disetujuiOleh: 'MANAJER',
+      diperiksaOleh: 'BAREP ARIYANTO',
+      disetujuiOleh: 'ARI MULYO TRANFIANTO',
       nodes,
       spans,
       rabItems: finalRabItems,
@@ -1493,6 +1723,204 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       )}) berhasil disimpan & tetap tampil di aplikasi!`
     );
     setTimeout(() => setStatusToast(null), 5000);
+  };
+
+  // Update package header volume (e.g. CC10, SJ6, MJ6-T) in RAB table & automatically adjust child detail rows + pole constructions
+  const handleUpdateRabPackageHeaderQty = (
+    headerRow: RabLineItem,
+    nextVolRaw: number
+  ) => {
+    const safeNextVol = Math.max(0, Number(nextVolRaw) || 0);
+    const pkgCodeUpper = (
+      headerRow.parentPackageCode ||
+      headerRow.uraian ||
+      ''
+    )
+      .trim()
+      .toUpperCase();
+
+    setRabItems((prev) =>
+      updateRabPackageHeaderVolume(prev, headerRow.id, safeNextVol)
+    );
+
+    if (pkgCodeUpper && safeNextVol > 0) {
+      setNodes((prevNodes) => {
+        const matchingNodeIndices: number[] = [];
+        prevNodes.forEach((n, idx) => {
+          if (
+            (n.constructions || []).some(
+              (c) => c.code.trim().toUpperCase() === pkgCodeUpper
+            )
+          ) {
+            matchingNodeIndices.push(idx);
+          }
+        });
+        if (matchingNodeIndices.length === 1) {
+          const targetIdx = matchingNodeIndices[0];
+          return prevNodes.map((n, idx) =>
+            idx === targetIdx
+              ? {
+                  ...n,
+                  constructions: n.constructions.map((c) =>
+                    c.code.trim().toUpperCase() === pkgCodeUpper
+                      ? { ...c, qty: safeNextVol }
+                      : c
+                  ),
+                }
+              : n
+          );
+        }
+        return prevNodes;
+      });
+    }
+  };
+
+  // Download Berkas Survei (Surat Permohonan + Tabel RAB Resmi PLN + Gambar Sketsa Ber-Etiket PLN)
+  const handleDownloadSurveyBundle = () => {
+    const effectiveRab =
+      rabItems.length === 0 && (nodes.length > 0 || spans.length > 0)
+        ? generateRabItemsFromSurvey({
+            nodes,
+            spans,
+            includePembetonanTiang,
+            transportasiRit,
+          })
+        : rabItems;
+    const summary = calculateRabSummary(effectiveRab, ppnPercent);
+    const grouped = groupRabItemsByRomanSection(effectiveRab);
+    const svgMarkup = svgRef.current ? svgRef.current.outerHTML : '';
+
+    const rabRowsHtml = grouped
+      .filter((sec) => sec.items.length > 0)
+      .map((sec) => {
+        let seq = 0;
+        const secHeader = `<tr style="background:#f1f5f9;font-weight:800;"><td style="border:1px solid #334155;padding:4px;text-align:center;">${sec.code}</td><td colspan="9" style="border:1px solid #334155;padding:4px 8px;">${sec.title}</td></tr>`;
+        const itemRows = sec.items
+          .map((row) => {
+            if (row.isPackageHeader) {
+              seq = 0;
+              return `<tr style="background:#fef3c7;font-weight:800;"><td style="border:1px solid #334155;padding:4px;text-align:center;">+</td><td style="border:1px solid #334155;padding:4px 8px;">[${row.uraian}] ${row.sourceInfo || ''}</td><td style="border:1px solid #334155;padding:4px;text-align:center;">-</td><td style="border:1px solid #334155;padding:4px;text-align:center;">${row.satuan || 'Unit'}</td><td style="border:1px solid #334155;padding:4px;text-align:center;">${row.volume}</td><td colspan="5" style="border:1px solid #334155;padding:4px;text-align:right;">-</td></tr>`;
+            }
+            seq += 1;
+            const brk = calculateRabRowBreakdown(row);
+            return `<tr><td style="border:1px solid #334155;padding:4px;text-align:center;">${row.itemNo ?? seq}</td><td style="border:1px solid #334155;padding:4px 8px;">${row.parentPackageCode ? '↳ ' : ''}${row.uraian}</td><td style="border:1px solid #334155;padding:4px;text-align:center;">${row.gol}</td><td style="border:1px solid #334155;padding:4px;text-align:center;">${row.satuan}</td><td style="border:1px solid #334155;padding:4px;text-align:center;font-weight:700;">${row.volume}</td><td style="border:1px solid #334155;padding:4px;text-align:right;">${row.hargaSatuan.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:4px;text-align:right;">${brk.mdu.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:4px;text-align:right;">${brk.hardware.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:4px;text-align:right;">${brk.jasa.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:4px;text-align:right;font-weight:700;">${brk.jumlah.toLocaleString('id-ID')}</td></tr>`;
+          })
+          .join('');
+        return secHeader + itemRows;
+      })
+      .join('');
+
+    const suratPagesHtml = attachedSuratPages
+      .map((pageData, idx) => {
+        const pageNum = idx + 1;
+        const isFormal = !pageData || pageData.startsWith('FORMAL_PAGE_');
+        const isPdf = Boolean(pageData && pageData.startsWith('data:application/pdf'));
+        const isImg = Boolean(pageData && pageData.startsWith('data:image/'));
+
+        let bodyContent = '';
+        if (!isFormal && isImg) {
+          bodyContent = `<div style="text-align:center;margin-top:8px;"><img src="${pageData}" alt="Surat Permohonan Halaman ${pageNum}" style="max-width:100%;max-height:235mm;object-fit:contain;border:1px solid #cbd5e1;" /></div>`;
+        } else if (!isFormal && isPdf) {
+          bodyContent = `<div style="margin-top:8px;"><embed src="${pageData}" type="application/pdf" width="100%" height="840px" style="border:1px solid #cbd5e1;" /></div>`;
+        } else if (!isFormal) {
+          bodyContent = `<div style="margin-top:8px;padding:12px;border:1px solid #cbd5e1;background:#f8fafc;"><p><strong>Lampiran Berkas Surat Permohonan (${item.suratPermohonan || 'Terlampir'})</strong></p><embed src="${pageData}" width="100%" height="760px" /></div>`;
+        } else {
+          bodyContent = `
+            <div style="margin-top:10px;line-height:1.5;">
+              <p><strong>No. Nodin / Agenda:</strong> ${item.noNodin || '-'} | <strong>Tanggal Surat:</strong> ${item.tglSurat || '-'}</p>
+              <p><strong>Nama Pemohon:</strong> ${item.projectName} | <strong>Kontak:</strong> ${item.kontakPerson || '-'}</p>
+              <p><strong>Jenis Transaksi:</strong> ${item.transaksi} — ${item.peruntukan}${item.transaksi !== 'PFK' && item.dayaBaru ? ` | <strong>Daya / Tarif:</strong> ${item.dayaBaru.toLocaleString('id-ID')} VA (${item.tarif})` : ''}</p>
+              <p><strong>Alamat Lokasi:</strong> ${item.alamat} | <strong>Koordinat:</strong> ${tagingLokasi}</p>
+              <p><strong>Uraian Permohonan:</strong> ${item.keteranganPekerjaan || judulGambar}</p>
+            </div>
+          `;
+        }
+
+        return `<div class="page">
+          <div style="border-bottom:2px solid #0f172a;padding-bottom:6px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+            <h2 style="font-size:13px;margin:0;">HALAMAN ${pageNum} — SURAT PERMOHONAN PELANGGAN (${item.projectName})</h2>
+            <span style="font-size:10px;font-weight:700;">No. Surat: ${item.suratPermohonan || '-'}</span>
+          </div>
+          ${bodyContent}
+        </div>`;
+      })
+      .join('');
+
+    const htmlDoc = `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <title>Berkas Survei & RAB PLN - ${item.noNodin || item.projectName}</title>
+  <style>
+    @page { size: A4 portrait; margin: 10mm; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; color: #0f172a; margin: 0; padding: 10mm; font-size: 10.5px; background: #ffffff; }
+    h1, h2, h3 { margin: 0 0 4px 0; }
+    .page { width: 190mm; max-width: 100%; min-height: 265mm; margin: 0 auto 14mm auto; border: 1.5px solid #0f172a; padding: 10mm; page-break-after: always; background: #ffffff; }
+    .page:last-child { page-break-after: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 9.5px; margin-top: 8px; }
+    th { background: #0f172a; color: #ffffff; border: 1px solid #334155; padding: 4px 5px; }
+    td { padding: 3.5px 5px; }
+    .sig-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; margin-top: 22px; text-align: center; font-size: 10.5px; page-break-inside: avoid; }
+    .sig-box { border: 1px solid #cbd5e1; border-radius: 4px; padding: 10px 8px; }
+    .sig-space { height: 56px; }
+    @media print {
+      body { padding: 0; }
+      .page { margin: 0 auto; border: 1px solid #0f172a; }
+    }
+  </style>
+</head>
+<body>
+  ${suratPagesHtml}
+  <div class="page">
+    <h2>RENCANA ANGGARAN BIAYA (RAB) RESMI PLN — ${judulGambar}</h2>
+    <p><strong>Lokasi:</strong> ${lokasiPekerjaan} | <strong>Pelaksana:</strong> ${pelaksanaPekerjaan} | <strong>PRK:</strong> ${nomorPrk}</p>
+    <table>
+      <thead>
+        <tr><th>NO</th><th>URAIAN</th><th>GOL</th><th>SAT</th><th>VOL</th><th>HARGA SATUAN</th><th>MDU</th><th>HARDWARE</th><th>JASA</th><th>JUMLAH</th></tr>
+      </thead>
+      <tbody>${rabRowsHtml}</tbody>
+      <tfoot>
+        <tr style="font-weight:800;background:#f8fafc;"><td colspan="6" style="border:1px solid #334155;padding:5px;text-align:right;">SUB TOTAL</td><td style="border:1px solid #334155;padding:5px;text-align:right;">${summary.subTotalMdu.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:5px;text-align:right;">${summary.subTotalHardware.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:5px;text-align:right;">${summary.subTotalJasa.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:5px;text-align:right;">${summary.subTotalJumlah.toLocaleString('id-ID')}</td></tr>
+        <tr style="font-weight:800;background:#f8fafc;"><td colspan="9" style="border:1px solid #334155;padding:5px;text-align:right;">PPN ${ppnPercent}%</td><td style="border:1px solid #334155;padding:5px;text-align:right;">${summary.ppnAmount.toLocaleString('id-ID')}</td></tr>
+        <tr style="font-weight:900;background:#0f172a;color:#ffffff;"><td colspan="9" style="border:1px solid #334155;padding:5px;text-align:right;">TOTAL RAB (RP)</td><td style="border:1px solid #334155;padding:5px;text-align:right;">Rp ${summary.grandTotal.toLocaleString('id-ID')}</td></tr>
+      </tfoot>
+    </table>
+    <p style="margin-top:8px;font-weight:700;font-style:italic;">Terbilang: ${summary.terbilang}</p>
+    <div class="sig-grid">
+      <div class="sig-box">
+        <div>Mengetahui / Setuju Dilaksanakan,</div>
+        <div style="font-weight:800;margin-top:2px;">MANAJER ULP BOROBUDUR</div>
+        <div class="sig-space"></div>
+        <div style="font-weight:800;text-decoration:underline;">( ARI MULYO TRANFIANTO )</div>
+      </div>
+      <div class="sig-box">
+        <div>Borobudur, ${formatDateDdMmYyyy(item.tglSurvei)} • Diperiksa Oleh,</div>
+        <div style="font-weight:800;margin-top:2px;">TL TEKNIK</div>
+        <div class="sig-space"></div>
+        <div style="font-weight:800;text-decoration:underline;">( BAREP ARIYANTO )</div>
+      </div>
+    </div>
+  </div>
+  ${svgMarkup ? `<div class="page"><h2>GAMBAR SKETSA SURVEI BER-ETIKET PLN</h2><div style="margin-top:8px;">${svgMarkup}</div></div>` : ''}
+</body>
+</html>`;
+
+    const blob = new Blob([htmlDoc], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const cleanId = (item.noNodin || item.projectName || item.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+    a.href = url;
+    a.download = `Berkas_Survei_RAB_${cleanId}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    setStatusToast(
+      `✓ Berkas Survei & RAB (Berkas_Survei_RAB_${cleanId}.html) berhasil di-download!`
+    );
+    setTimeout(() => setStatusToast(null), 4000);
   };
 
   // Node Construction Inspector Handlers
@@ -2095,14 +2523,20 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             return (
               <g key={span.id}>
                 {cables.map((cable, cIdx) => {
-                  const offsetPx = (cIdx - (cables.length - 1) / 2) * 7;
+                  const offsetPx = (cIdx - (cables.length - 1) / 2) * 3.8;
                   const x1 = pFrom.x + nx * offsetPx;
                   const y1 = pFrom.y + ny * offsetPx;
                   const x2 = pTo.x + nx * offsetPx;
                   const y2 = pTo.y + ny * offsetPx;
+                  const phaseCount = inferPhaseCountFromConductor(
+                    cable.conductorType,
+                    cable.phaseCount
+                  );
                   const vis = getCableVisualStyle(
                     cable.jenisJaringan,
-                    cable.statusJaringan
+                    cable.statusJaringan,
+                    cable.conductorType,
+                    phaseCount
                   );
                   const cableBongkar = isCableMarkedBongkar(cable, span);
                   const tickRatio = getStaggeredPhaseTickRatio(
@@ -2110,10 +2544,9 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                     cables.length
                   );
                   const phaseSlash = getPhaseSlashSymbol(
-                    inferPhaseCountFromConductor(
-                      cable.conductorType,
-                      cable.phaseCount
-                    )
+                    phaseCount,
+                    cable.jenisJaringan,
+                    cable.conductorType
                   );
 
                   return (
@@ -2123,26 +2556,28 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                         y1={y1}
                         x2={x2}
                         y2={y2}
-                        stroke={cableBongkar ? '#dc2626' : vis.strokeColor}
+                        stroke={vis.strokeColor}
                         strokeWidth={vis.weight}
-                        strokeDasharray={cableBongkar ? '6,4' : vis.dashArray}
+                        strokeDasharray={vis.dashArray}
                       />
-                      <text
-                        x={x1 + (x2 - x1) * tickRatio}
-                        y={y1 + (y2 - y1) * tickRatio - 4}
-                        textAnchor="middle"
-                        fontSize="10"
-                        fontWeight="900"
-                        fill={cableBongkar ? '#dc2626' : vis.strokeColor}
-                      >
-                        {phaseSlash}
-                      </text>
+                      {phaseSlash && (
+                        <text
+                          x={x1 + (x2 - x1) * tickRatio}
+                          y={y1 + (y2 - y1) * tickRatio + 3.5}
+                          textAnchor="middle"
+                          fontSize="9"
+                          fontWeight="900"
+                          fill={vis.strokeColor}
+                        >
+                          {phaseSlash}
+                        </text>
+                      )}
                       {cableBongkar && (
                         <text
-                          x={(x1 + x2) / 2 + 18}
+                          x={(x1 + x2) / 2 + 16}
                           y={(y1 + y2) / 2 + 4}
                           textAnchor="middle"
-                          fontSize="13"
+                          fontSize="12"
                           fontWeight="900"
                           fill="#dc2626"
                         >
@@ -2247,35 +2682,123 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             );
           })}
 
-          {/* Pole / Gardu Nodes & Bongkar X */}
+          {/* Pole / Gardu / Trafo / FCO / ABSW / Schoor Nodes & Bongkar X */}
           {projectedNodes.map(({ node, x, y }) => {
-            const isPlanned =
-              node.kind === 'TIANG_RENCANA' ||
-              node.kind === 'GARDU_RENCANA' ||
-              node.kind === 'TITIK_APP';
-            const isGardu =
-              node.kind === 'GARDU_RENCANA' || node.kind === 'GARDU_TRAFO';
+            const sym = resolveNodeDrawingSymbol(node);
+            const { color, poleMaterial, isGardu, trafoPhase, hasFco, hasAbsw, hasSchoor } = sym;
             const nodeBongkar = isNodeMarkedBongkar(node);
 
             return (
               <g key={node.id} transform={`translate(${x}, ${y})`}>
-                {isGardu ? (
-                  <polygon
-                    points="0,-9 9,8 -9,8"
-                    fill={isPlanned ? '#dc2626' : '#0f172a'}
-                    stroke="#ffffff"
-                    strokeWidth="1.5"
-                  />
-                ) : (
-                  <circle
-                    cx="0"
-                    cy="0"
-                    r="6.5"
-                    fill={isPlanned ? '#dc2626' : '#0f172a'}
-                    stroke="#ffffff"
-                    strokeWidth="1.5"
-                  />
+                {/* No 12. Schoor (Panah Miring ↗ Sesuai Arah Tarikan Skur - Mendukung Multiple Set) */}
+                {hasSchoor &&
+                  sym.schoorAngleDegList.map((angle, sIdx) => (
+                    <g key={sIdx} transform={`rotate(${angle})`}>
+                      <line x1="7" y1="0" x2="21" y2="0" stroke={color} strokeWidth="1.8" />
+                      <polygon points="23,0 16,-3.8 16,3.8" fill={color} />
+                    </g>
+                  ))}
+
+                {/* No 7 & 8. Trafo 1 Fasa (▲) vs Trafo 3 Fasa (▲▲▲) tepat di titik tanpa simbol tiang */}
+                {isGardu && (
+                  trafoPhase === 1 ? (
+                    <polygon
+                      points="0,-8.5 -7.5,5.5 7.5,5.5"
+                      fill={color}
+                      stroke="#0f172a"
+                      strokeWidth="1"
+                    />
+                  ) : (
+                    <g>
+                      <polygon
+                        points="-8,-7.5 -13.5,5 -2.5,5"
+                        fill={color}
+                        stroke="#0f172a"
+                        strokeWidth="0.9"
+                      />
+                      <polygon
+                        points="0,-7.5 -5.5,5 5.5,5"
+                        fill={color}
+                        stroke="#0f172a"
+                        strokeWidth="0.9"
+                      />
+                      <polygon
+                        points="8,-7.5 2.5,5 13.5,5"
+                        fill={color}
+                        stroke="#0f172a"
+                        strokeWidth="0.9"
+                      />
+                    </g>
+                  )
                 )}
+
+                {/* No 9. Fuse Cut Out (S/) - hanya jika diaktifkan eksplisit */}
+                {hasFco && (
+                  <g transform="translate(-15, -12)">
+                    <text
+                      x="0"
+                      y="3.5"
+                      textAnchor="middle"
+                      fontSize="9.5"
+                      fontWeight="900"
+                      fill={color}
+                    >
+                      S
+                    </text>
+                    <line x1="-3.5" y1="5" x2="3.5" y2="-5" stroke={color} strokeWidth="1.4" />
+                  </g>
+                )}
+
+                {/* No 10. ABSW (──| |──) */}
+                {hasAbsw && (
+                  <g transform="translate(0, 14)">
+                    <line x1="-10" y1="0" x2="-2.2" y2="0" stroke={color} strokeWidth="1.6" />
+                    <line x1="-2.2" y1="-4" x2="-2.2" y2="4" stroke={color} strokeWidth="1.6" />
+                    <line x1="2.2" y1="-4" x2="2.2" y2="4" stroke={color} strokeWidth="1.6" />
+                    <line x1="2.2" y1="0" x2="10" y2="0" stroke={color} strokeWidth="1.6" />
+                  </g>
+                )}
+
+                {/* No 1 & 2. Tiang Beton (⊗) vs Tiang Besi (●) - Tidak ditampilkan pada simbol Trafo */}
+                {!isGardu &&
+                  (poleMaterial === 'BESI' ? (
+                    <circle
+                      cx="0"
+                      cy="0"
+                      r="6.5"
+                      fill={color}
+                      stroke="#0f172a"
+                      strokeWidth="1.2"
+                    />
+                  ) : (
+                    <g>
+                      <circle
+                        cx="0"
+                        cy="0"
+                        r="6.8"
+                        fill="#ffffff"
+                        stroke={color}
+                        strokeWidth="1.9"
+                      />
+                      <line
+                        x1="-4.6"
+                        y1="-4.6"
+                        x2="4.6"
+                        y2="4.6"
+                        stroke={color}
+                        strokeWidth="1.7"
+                      />
+                      <line
+                        x1="-4.6"
+                        y1="4.6"
+                        x2="4.6"
+                        y2="-4.6"
+                        stroke={color}
+                        strokeWidth="1.7"
+                      />
+                    </g>
+                  ))}
+
                 {nodeBongkar && (
                   <g>
                     <line
@@ -2300,101 +2823,443 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             );
           })}
 
-          {/* Draggable Legend Box (Dapat Dipindah-Pindah Bebas; Kabel Hanya Menuliskan Panjangnya) */}
-          <g
-            id="draggable-etiket-legend"
-            transform={`translate(${legendPos.x}, ${legendPos.y})`}
-            onPointerDown={handleLegendPointerDown}
-            style={{ cursor: isDraggingLegend ? 'grabbing' : 'move' }}
-            className="select-none"
-          >
-            <rect
-              width="214"
-              height="154"
-              rx="6"
-              fill="#ffffff"
-              fillOpacity="0.96"
-              stroke="#0f172a"
-              strokeWidth="1.6"
-            />
-            {/* Dark Drag Grip Header */}
-            <rect
-              width="214"
-              height="24"
-              rx="6"
-              fill="#0f172a"
-            />
-            <rect
-              y="18"
-              width="214"
-              height="6"
-              fill="#0f172a"
-            />
-            <text
-              x="10"
-              y="16"
-              fontSize="8.8"
-              fontWeight="900"
-              fill="#ffffff"
-              letterSpacing="0.5"
-            >
-              ✥ LEGENDA GAMBAR (GESER BEBAS)
-            </text>
+          {/* Draggable Dynamic "Keterangan Gambar :" Table (Hanya menampilkan simbol yang ada di kanvas) */}
+          {(() => {
+            const activeRows = getActiveLegendItems(nodes, spans);
+            const anyBaru = activeRows.some((r) => r.hasBaru);
+            const anyEksisting = activeRows.some((r) => r.hasEksisting);
+            const showBothCols = anyBaru && anyEksisting;
+            const tableWidth = showBothCols ? 222 : 178;
+            const rowHeight = 16;
+            const tableHeight = 33 + Math.max(1, activeRows.length) * rowHeight + 4;
 
-            {/* 1. Kabel Merah: Tuliskan Saja Panjangnya */}
-            <line x1="12" y1="38" x2="38" y2="38" stroke="#dc2626" strokeWidth="2.6" />
-            <text x="46" y="41" fontSize="8.5" fontWeight="700" fill="#0f172a">
-              {cableLegendLengths.jtmMeters > 0
-                ? `${cableLegendLengths.jtmMeters}m`
-                : `${cableLegendLengths.plannedMeters}m`}
-            </text>
+            const renderLegendSymbol = (
+              key: (typeof activeRows)[number]['key'],
+              cx: number,
+              isBaru: boolean
+            ) => {
+              const col = isBaru ? '#dc2626' : '#0f172a';
+              switch (key) {
+                case 'TIANG_BETON':
+                  return (
+                    <g transform={`translate(${cx}, 8)`}>
+                      <circle r="4.5" fill="#fff" stroke={col} strokeWidth="1.3" />
+                      <line x1="-3" y1="-3" x2="3" y2="3" stroke={col} strokeWidth="1.2" />
+                      <line x1="-3" y1="3" x2="3" y2="-3" stroke={col} strokeWidth="1.2" />
+                    </g>
+                  );
+                case 'TIANG_BESI':
+                  return (
+                    <circle
+                      cx={cx}
+                      cy="8"
+                      r="4.5"
+                      fill={col}
+                      stroke="#0f172a"
+                      strokeWidth={isBaru ? '0.8' : '0'}
+                    />
+                  );
+                case 'JTM_3P':
+                  return (
+                    <line
+                      x1={cx - 19}
+                      y1="8"
+                      x2={cx + 19}
+                      y2="8"
+                      stroke={col}
+                      strokeWidth="1.8"
+                    />
+                  );
+                case 'JTM_1P':
+                  return (
+                    <line
+                      x1={cx - 19}
+                      y1="8"
+                      x2={cx + 19}
+                      y2="8"
+                      stroke={col}
+                      strokeWidth="1.8"
+                      strokeDasharray="4,3"
+                    />
+                  );
+                case 'JTR_1P':
+                  return (
+                    <g>
+                      <line
+                        x1={cx - 19}
+                        y1="8"
+                        x2={cx + 19}
+                        y2="8"
+                        stroke={col}
+                        strokeWidth="1.6"
+                      />
+                      <text
+                        x={cx}
+                        y="11"
+                        fontSize="7.5"
+                        fontWeight="900"
+                        textAnchor="middle"
+                        fill={col}
+                      >
+                        ///
+                      </text>
+                    </g>
+                  );
+                case 'JTR_3P':
+                  return (
+                    <g>
+                      <line
+                        x1={cx - 19}
+                        y1="8"
+                        x2={cx + 19}
+                        y2="8"
+                        stroke={col}
+                        strokeWidth="1.6"
+                      />
+                      <text
+                        x={cx}
+                        y="11"
+                        fontSize="7.5"
+                        fontWeight="900"
+                        textAnchor="middle"
+                        fill={col}
+                      >
+                        ////
+                      </text>
+                    </g>
+                  );
+                case 'TRAFO_1P':
+                  return (
+                    <polygon
+                      points={`${cx},3 ${cx - 6},12 ${cx + 6},12`}
+                      fill={col}
+                      stroke="#0f172a"
+                      strokeWidth={isBaru ? '0.7' : '0'}
+                    />
+                  );
+                case 'TRAFO_3P':
+                  return (
+                    <g>
+                      <polygon
+                        points={`${cx - 5},4 ${cx - 10},12 ${cx},12`}
+                        fill={col}
+                        stroke="#0f172a"
+                        strokeWidth={isBaru ? '0.6' : '0'}
+                      />
+                      <polygon
+                        points={`${cx},4 ${cx - 5},12 ${cx + 5},12`}
+                        fill={col}
+                        stroke="#0f172a"
+                        strokeWidth={isBaru ? '0.6' : '0'}
+                      />
+                      <polygon
+                        points={`${cx + 5},4 ${cx},12 ${cx + 10},12`}
+                        fill={col}
+                        stroke="#0f172a"
+                        strokeWidth={isBaru ? '0.6' : '0'}
+                      />
+                    </g>
+                  );
+                case 'FCO':
+                  return (
+                    <g>
+                      <text
+                        x={cx}
+                        y="12"
+                        fontSize="8.5"
+                        fontWeight="900"
+                        textAnchor="middle"
+                        fill={col}
+                      >
+                        S
+                      </text>
+                      <line
+                        x1={cx - 4}
+                        y1="13"
+                        x2={cx + 4}
+                        y2="3"
+                        stroke={col}
+                        strokeWidth="1.2"
+                      />
+                    </g>
+                  );
+                case 'ABSW':
+                  return (
+                    <g>
+                      <line
+                        x1={cx - 16}
+                        y1="8"
+                        x2={cx - 3}
+                        y2="8"
+                        stroke={col}
+                        strokeWidth="1.4"
+                      />
+                      <line
+                        x1={cx - 3}
+                        y1="4"
+                        x2={cx - 3}
+                        y2="12"
+                        stroke={col}
+                        strokeWidth="1.4"
+                      />
+                      <line
+                        x1={cx + 2}
+                        y1="4"
+                        x2={cx + 2}
+                        y2="12"
+                        stroke={col}
+                        strokeWidth="1.4"
+                      />
+                      <line
+                        x1={cx + 2}
+                        y1="8"
+                        x2={cx + 15}
+                        y2="8"
+                        stroke={col}
+                        strokeWidth="1.4"
+                      />
+                    </g>
+                  );
+                case 'VANG_NET':
+                  return (
+                    <line
+                      x1={cx - 19}
+                      y1="8"
+                      x2={cx + 19}
+                      y2="8"
+                      stroke="#0284c7"
+                      strokeWidth="2"
+                    />
+                  );
+                case 'SCHOOR':
+                  return (
+                    <g>
+                      <line
+                        x1={cx - 10}
+                        y1="12"
+                        x2={cx + 7}
+                        y2="5"
+                        stroke={col}
+                        strokeWidth="1.6"
+                      />
+                      <polygon
+                        points={`${cx + 9},4 ${cx + 3},4 ${cx + 6},9`}
+                        fill={col}
+                      />
+                    </g>
+                  );
+                case 'MVTIC':
+                  return (
+                    <line
+                      x1={cx - 19}
+                      y1="9"
+                      x2={cx + 19}
+                      y2="9"
+                      stroke={col}
+                      strokeWidth="1.8"
+                      strokeDasharray="6,2.5,1.5,2.5,1.5,2.5"
+                    />
+                  );
+              }
+            };
 
-            {/* 2. Kabel Biru: Tuliskan Saja Panjangnya */}
-            <line x1="12" y1="54" x2="38" y2="54" stroke="#2563eb" strokeWidth="2.6" />
-            <text x="46" y="57" fontSize="8.5" fontWeight="700" fill="#0f172a">
-              {cableLegendLengths.jtrPlannedMeters > 0
-                ? `${cableLegendLengths.jtrPlannedMeters}m`
-                : `${cableLegendLengths.jtrMeters}m`}
-            </text>
+            return (
+              <g
+                id="draggable-etiket-legend"
+                transform={`translate(${legendPos.x}, ${legendPos.y})`}
+                onPointerDown={handleLegendPointerDown}
+                style={{ cursor: isDraggingLegend ? 'grabbing' : 'move' }}
+                className="select-none"
+              >
+                <rect
+                  width={tableWidth}
+                  height={tableHeight}
+                  rx="4"
+                  fill="#ffffff"
+                  fillOpacity="0.97"
+                  stroke="#0f172a"
+                  strokeWidth="1.4"
+                />
+                <rect width={tableWidth} height="19" rx="3" fill="#0f172a" />
+                <text x="7" y="13" fontSize="7.6" fontWeight="900" fill="#ffffff">
+                  ✥ Keterangan Gambar : ({cableLegendLengths.plannedMeters}m)
+                </text>
 
-            {/* 3. Kabel Oranye: Tuliskan Saja Panjangnya */}
-            <line x1="12" y1="70" x2="38" y2="70" stroke="#f97316" strokeWidth="2" strokeDasharray="3,2" />
-            <text x="46" y="73" fontSize="8.5" fontWeight="700" fill="#0f172a">
-              {cableLegendLengths.srMeters > 0 ? `${cableLegendLengths.srMeters}m` : '25m'}
-            </text>
+                {/* Table Column Headers */}
+                <rect
+                  x="0"
+                  y="19"
+                  width={tableWidth}
+                  height="14"
+                  fill="#f1f5f9"
+                  stroke="#0f172a"
+                  strokeWidth="0.7"
+                />
+                <text
+                  x="11"
+                  y="29"
+                  fontSize="7"
+                  fontWeight="800"
+                  textAnchor="middle"
+                  fill="#0f172a"
+                >
+                  No
+                </text>
+                <text
+                  x="72"
+                  y="29"
+                  fontSize="7"
+                  fontWeight="800"
+                  textAnchor="middle"
+                  fill="#0f172a"
+                >
+                  Nama Material
+                </text>
+                {showBothCols ? (
+                  <>
+                    <text
+                      x="150"
+                      y="29"
+                      fontSize="7"
+                      fontWeight="800"
+                      textAnchor="middle"
+                      fill="#dc2626"
+                    >
+                      Baru
+                    </text>
+                    <text
+                      x="196"
+                      y="29"
+                      fontSize="7"
+                      fontWeight="800"
+                      textAnchor="middle"
+                      fill="#0f172a"
+                    >
+                      Eksisting
+                    </text>
+                    <line
+                      x1="22"
+                      y1="19"
+                      x2="22"
+                      y2={tableHeight}
+                      stroke="#cbd5e1"
+                      strokeWidth="0.7"
+                    />
+                    <line
+                      x1="124"
+                      y1="19"
+                      x2="124"
+                      y2={tableHeight}
+                      stroke="#cbd5e1"
+                      strokeWidth="0.7"
+                    />
+                    <line
+                      x1="174"
+                      y1="19"
+                      x2="174"
+                      y2={tableHeight}
+                      stroke="#cbd5e1"
+                      strokeWidth="0.7"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <text
+                      x="151"
+                      y="29"
+                      fontSize="7"
+                      fontWeight="800"
+                      textAnchor="middle"
+                      fill={anyBaru ? '#dc2626' : '#0f172a'}
+                    >
+                      {anyBaru ? 'Baru' : 'Eksisting'}
+                    </text>
+                    <line
+                      x1="22"
+                      y1="19"
+                      x2="22"
+                      y2={tableHeight}
+                      stroke="#cbd5e1"
+                      strokeWidth="0.7"
+                    />
+                    <line
+                      x1="124"
+                      y1="19"
+                      x2="124"
+                      y2={tableHeight}
+                      stroke="#cbd5e1"
+                      strokeWidth="0.7"
+                    />
+                  </>
+                )}
 
-            {/* 4. Tiang Rencana & Eksisting */}
-            <circle cx="18" cy="86" r="5" fill="#dc2626" stroke="#ffffff" strokeWidth="1" />
-            <circle cx="32" cy="86" r="5" fill="#0f172a" stroke="#ffffff" strokeWidth="1" />
-            <text x="46" y="89" fontSize="8.5" fontWeight="700" fill="#0f172a">
-              Tiang Rencana / Eksisting
-            </text>
-
-            {/* 5. Gardu Trafo */}
-            <polygon points="25,97 32,109 18,109" fill="#dc2626" stroke="#ffffff" strokeWidth="1" />
-            <text x="46" y="105" fontSize="8.5" fontWeight="700" fill="#0f172a">
-              Gardu Trafo Distribusi
-            </text>
-
-            {/* 6. Silang Bongkar */}
-            <g transform="translate(25, 121)">
-              <circle cx="0" cy="0" r="6" fill="#fef2f2" stroke="#dc2626" strokeWidth="1" />
-              <line x1="-4" y1="-4" x2="4" y2="4" stroke="#dc2626" strokeWidth="1.8" />
-              <line x1="4" y1="-4" x2="-4" y2="4" stroke="#dc2626" strokeWidth="1.8" />
-            </g>
-            <text x="46" y="124" fontSize="8.5" fontWeight="700" fill="#dc2626">
-              ✕ Konstruksi Dibongkar
-            </text>
-
-            {/* 7. Total Panjang Kabel (m) */}
-            <rect x="12" y="133" width="28" height="13" rx="2" fill="#f8fafc" stroke="#0f172a" strokeWidth="0.8" />
-            <text x="26" y="142" fontSize="7.5" fontWeight="800" textAnchor="middle" fill="#0f172a">
-              {spans[0]?.distanceMeters || 40}m
-            </text>
-            <text x="46" y="142" fontSize="8.5" fontWeight="700" fill="#0f172a">
-              {cableLegendLengths.plannedMeters}m
-            </text>
-          </g>
+                {activeRows.length === 0 ? (
+                  <g transform="translate(0, 33)">
+                    <text
+                      x={tableWidth / 2}
+                      y="11"
+                      fontSize="6.8"
+                      fontWeight="700"
+                      textAnchor="middle"
+                      fill="#64748b"
+                    >
+                      Belum ada objek di kanvas
+                    </text>
+                  </g>
+                ) : (
+                  activeRows.map((row, rIdx) => {
+                    const rowY = 33 + rIdx * rowHeight;
+                    return (
+                      <g key={row.key} transform={`translate(0, ${rowY})`}>
+                        {rIdx < activeRows.length - 1 && (
+                          <line
+                            x1="0"
+                            y1={rowHeight}
+                            x2={tableWidth}
+                            y2={rowHeight}
+                            stroke="#e2e8f0"
+                            strokeWidth="0.6"
+                          />
+                        )}
+                        <text
+                          x="11"
+                          y="11"
+                          fontSize="6.8"
+                          fontWeight="700"
+                          textAnchor="middle"
+                          fill="#0f172a"
+                        >
+                          {row.no}
+                        </text>
+                        <text
+                          x="26"
+                          y="11"
+                          fontSize="6.6"
+                          fontWeight="700"
+                          fill="#0f172a"
+                        >
+                          {row.label}
+                        </text>
+                        {showBothCols ? (
+                          <>
+                            {row.hasBaru && renderLegendSymbol(row.key, 150, true)}
+                            {row.hasEksisting &&
+                              renderLegendSymbol(row.key, 196, false)}
+                          </>
+                        ) : (
+                          renderLegendSymbol(
+                            row.key,
+                            151,
+                            anyBaru ? row.hasBaru : false
+                          )
+                        )}
+                      </g>
+                    );
+                  })
+                )}
+              </g>
+            );
+          })()}
         </svg>
 
         {/* Formal PLN Engineering Etiket Title Block */}
@@ -2409,18 +3274,25 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               </p>
             </div>
             <div className="mt-2 pt-1.5 border-t border-slate-200 text-[9.5px] text-slate-600 space-y-0.5">
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-600" />
-                <span>Merah = Tiang / Kabel Rencana</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-900" />
-                <span>Hitam = Tiang / Kabel Eksisting</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="font-black text-red-600">✕</span>
-                <span>Silang Merah = Konstruksi Dibongkar</span>
-              </div>
+              {getActiveLegendItems(nodes, spans).some((r) => r.hasBaru) && (
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-600" />
+                  <span>Merah = Tiang / Kabel Rencana</span>
+                </div>
+              )}
+              {getActiveLegendItems(nodes, spans).some((r) => r.hasEksisting) && (
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-900" />
+                  <span>Hitam = Tiang / Kabel Eksisting</span>
+                </div>
+              )}
+              {(nodes.some((n) => isNodeMarkedBongkar(n)) ||
+                spans.some((s) => isSpanMarkedBongkar(s))) && (
+                <div className="flex items-center gap-2">
+                  <span className="font-black text-red-600">✕</span>
+                  <span>Silang Merah = Konstruksi Dibongkar</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -2460,14 +3332,14 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                 </span>
               </div>
               <div className="flex items-center">
-                <span className="w-28 text-slate-700">DIPERIKSA</span>
+                <span className="w-28 text-slate-700">DIPERIKSA (TL)</span>
                 <span className="w-3 text-slate-700">:</span>
-                <span className="font-black text-slate-900 uppercase">TL TEKNIK</span>
+                <span className="font-black text-slate-900 uppercase">BAREP ARIYANTO</span>
               </div>
               <div className="flex items-center">
-                <span className="w-28 text-slate-700">DISETUJUI</span>
+                <span className="w-28 text-slate-700">DISETUJUI (MANAJER)</span>
                 <span className="w-3 text-slate-700">:</span>
-                <span className="font-black text-slate-900 uppercase">MANAJER</span>
+                <span className="font-black text-slate-900 uppercase">ARI MULYO TRANFIANTO</span>
               </div>
             </div>
             <div className="pt-1.5 mt-1 border-t border-slate-200 flex items-center justify-between text-[9px] text-slate-500 font-bold">
@@ -2741,12 +3613,9 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                                   onChange={(e) => {
                                     const nextVol =
                                       Number(e.target.value) || 0;
-                                    setRabItems((prev) =>
-                                      updateRabPackageHeaderVolume(
-                                        prev,
-                                        row.id,
-                                        nextVol
-                                      )
+                                    handleUpdateRabPackageHeaderQty(
+                                      row,
+                                      nextVol
                                     );
                                   }}
                                   className="w-16 text-center font-black bg-white border border-amber-500 rounded px-1.5 py-1 text-xs shadow-2xs focus:ring-2 focus:ring-amber-500"
@@ -2998,61 +3867,45 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             </tfoot>
           </table>
         </div>
-      </div>
-    );
-  };
 
-  return (
-    <div className="space-y-4">
-      {/* Top Studio Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-xl p-4 shadow-md border border-indigo-900/60">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div className="space-y-1">
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-300 text-[10px] font-extrabold uppercase tracking-wider">
-              <Zap className="w-3 h-3" />
-              ACUAN: HARGA KHS &amp; STANDAR KONSTRUKSI PLN (PRK 2019 / HSS
-              2020)
+        {/* Kolom Pengesahan & Persetujuan Resmi PLN (Hanya Manajer ULP & TL Teknik) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 p-4 bg-white border-t-2 border-slate-900 text-xs text-slate-900">
+          <div className="border border-slate-300 rounded-lg p-3.5 text-center space-y-12">
+            <div>
+              <p className="text-[11px] text-slate-600">Mengetahui / Setuju Dilaksanakan,</p>
+              <p className="font-black uppercase tracking-wide text-slate-900">
+                MANAJER ULP BOROBUDUR
+              </p>
             </div>
-            <h4 className="text-base font-extrabold tracking-tight text-white">
-              Studio Gambar Survei Peta GIS &amp; Generator RAB Otomatis
-            </h4>
-            <p className="text-xs text-slate-300">
-              Seluruh fasilitas gambar tersedia langsung di dalam Peta GIS
-              (Layar Penuh, Tiang, Gardu, Multi-Kabel 1Ø/3Ø, Tandai Bongkar ✕
-              &amp; Undo Ctrl+Z) → Tabel RAB 10 Kolom
-            </p>
+            <div className="pt-2 border-t border-slate-300">
+              <p className="font-extrabold underline uppercase text-slate-900">
+                ( ARI MULYO TRANFIANTO )
+              </p>
+            </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2.5 shrink-0">
-            <div className="bg-slate-800/90 border border-slate-700 rounded-lg px-3 py-2">
-              <p className="text-[10px] font-bold uppercase text-slate-400">
-                Tiang Rencana / Eksisting
+          <div className="border border-slate-300 rounded-lg p-3.5 text-center space-y-12">
+            <div>
+              <p className="text-[11px] text-slate-600">
+                Borobudur, {formatDateDdMmYyyy(item.tglSurvei)} • Diperiksa Oleh,
               </p>
-              <p className="text-xs font-extrabold text-white mt-0.5">
-                <span className="text-red-400">{plannedNodeCount} Merah</span> •{' '}
-                <span>{existingNodeCount} Hitam</span>
-              </p>
-            </div>
-            <div className="bg-slate-800/90 border border-slate-700 rounded-lg px-3 py-2">
-              <p className="text-[10px] font-bold uppercase text-slate-400">
-                Total Tarikan Rencana
-              </p>
-              <p className="text-xs font-extrabold text-cyan-300 mt-0.5">
-                {totalPlannedMeters} Meter
+              <p className="font-black uppercase tracking-wide text-slate-900">
+                TL TEKNIK
               </p>
             </div>
-            <div className="bg-slate-800/90 border border-slate-700 rounded-lg px-3 py-2">
-              <p className="text-[10px] font-bold uppercase text-slate-400">
-                Estimasi RAB (+PPN)
-              </p>
-              <p className="text-xs font-extrabold text-amber-300 mt-0.5">
-                Rp {rabSummary.grandTotal.toLocaleString('id-ID')}
+            <div className="pt-2 border-t border-slate-300">
+              <p className="font-extrabold underline uppercase text-slate-900">
+                ( BAREP ARIYANTO )
               </p>
             </div>
           </div>
         </div>
       </div>
+    );
+  };
 
+  return (
+    <div className="space-y-3">
       {/* Status Toast */}
       {statusToast && (
         <div className="flex items-center justify-between gap-2 bg-emerald-50 border border-emerald-300 text-emerald-900 px-3.5 py-2 rounded-lg text-xs font-bold">
@@ -3070,7 +3923,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         </div>
       )}
 
-      {/* Sub-Tab Bar & Reference Action Buttons */}
+      {/* Sub-Tab Bar (Tanpa Tombol Simpan & Download Sesuai Instruksi) */}
       <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-100 p-2 rounded-xl border border-slate-200">
         <div className="flex flex-wrap items-center gap-1.5">
           <button
@@ -3095,7 +3948,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             }`}
           >
             <Compass className="w-3.5 h-3.5" />
-            2. Gambar Sketsa Ber-Etiket PLN
+            2. Gambar Sketa
           </button>
           <button
             type="button"
@@ -3107,7 +3960,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             }`}
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />
-            3. Tabel RAB Resmi PLN ({rabItems.length} Item)
+            3. Tabel RAB
           </button>
           <button
             type="button"
@@ -3119,163 +3972,226 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             }`}
           >
             <FileText className="w-3.5 h-3.5" />
-            4. Cetak Bundel Dokumen ({Math.max(1, attachedSuratPages.length) + 2} Halaman)
-          </button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          <a
-            href="/assets/aistudio/Harga_KHS_aca04794.pdf"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 text-[11px] font-bold"
-          >
-            <ExternalLink className="w-3 h-3 text-indigo-600" />
-            PDF Harga KHS
-          </a>
-          <a
-            href="/assets/aistudio/STANDAR_KONTRUKSI__PRK_2019__HSS_2020_2d9ae1d8.pdf"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 text-[11px] font-bold"
-          >
-            <ExternalLink className="w-3 h-3 text-indigo-600" />
-            PDF Standar Konstruksi
-          </a>
-          <button
-            type="button"
-            onClick={handleLoadPresetSmpn3Pabelan}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100 text-[11px] font-extrabold cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-            Muat Contoh SMP N 3 Pabelan
-          </button>
-          <button
-            type="button"
-            onClick={() => handleGenerateAndApplyRab(false)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-sm cursor-pointer"
-          >
-            <Zap className="w-3.5 h-3.5" />
-            <span>Simpan Gambar &amp; RAB</span>
+            4. Dokumen Survey
           </button>
         </div>
       </div>
 
       {/* ===================================================================== */}
-      {/* SUB-TAB 1: KANVAS PETA GIS                                            */}
+      {/* SUB-TAB 1: KANVAS PETA GIS (ULTRA-COMPACT SINGLE-LINE FLOATING DOCK)  */}
       {/* ===================================================================== */}
       {viewTab === 'map' && (
         <div
           ref={mapWrapperRef}
           className={
             isFullscreen
-              ? 'fixed inset-0 z-[9999] bg-slate-950 flex flex-col'
-              : 'relative rounded-xl overflow-hidden border-2 border-slate-800 bg-slate-900 shadow-lg'
+              ? 'fixed inset-0 z-[99999] w-screen h-screen bg-slate-950 flex flex-col'
+              : 'relative rounded-xl border-2 border-slate-800 bg-slate-900 shadow-lg'
           }
         >
-          {/* Top Integrated Dark GIS Toolbar */}
-          <div className="bg-slate-900/95 border-b border-slate-800 px-3 py-2 text-white space-y-2 z-20">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-1.5">
+          {/* Compact Single-Line Sticky Floating Dock Inside the Map */}
+          <div
+            className={
+              isFullscreen
+                ? 'absolute top-2 left-2 right-2 z-[1000] pointer-events-none flex justify-between items-start gap-2'
+                : 'sticky top-2 z-[1000] h-0 overflow-visible px-2 pt-2 pointer-events-none flex justify-between items-start gap-2'
+            }
+          >
+            {isToolbarCollapsed ? (
+              <div className="pointer-events-auto inline-flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-lg px-2.5 py-1 text-white shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => setIsToolbarCollapsed(false)}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-extrabold text-cyan-300 hover:text-white cursor-pointer"
+                  title="Tampilkan Alat Gambar GIS"
+                >
+                  <span>🛠 Alat Gambar</span>
+                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-white">
+                    ▾ Buka
+                  </span>
+                </button>
+              </div>
+            ) : (
+              <div className="pointer-events-auto inline-flex flex-wrap items-center gap-1 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-lg px-2 py-1 text-white shadow-lg max-w-full">
+                {/* 1. Geser */}
                 <button
                   type="button"
                   onClick={() => {
                     setActiveTool('pan');
                     setCableStartNodeId(null);
                   }}
-                  className={`px-2.5 py-1 rounded text-[11px] font-bold ${
+                  className={`px-2 py-0.5 rounded text-[11px] font-bold transition cursor-pointer ${
                     activeTool === 'pan'
                       ? 'bg-indigo-600 text-white'
                       : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                   }`}
+                  title="Mode Geser Peta"
                 >
                   ✋ Geser
                 </button>
 
-                {/* +Tiang Rencana / Eksisting */}
-                <div className="inline-flex items-center rounded overflow-hidden border border-slate-700">
+                {/* 2. Compact Tiang Tool + Dropdown Spesifikasi Tiang */}
+                <div className="inline-flex items-center rounded border border-slate-700 bg-slate-800 overflow-hidden">
                   <button
                     type="button"
                     onClick={() => {
-                      setPolePlacementKind('TIANG_RENCANA');
-                      setActiveTool('add_pole_planned');
+                      setActiveTool(
+                        polePlacementKind === 'TIANG_RENCANA'
+                          ? 'add_pole_planned'
+                          : 'add_pole_existing'
+                      );
                     }}
-                    className={`px-2.5 py-1 text-[11px] font-bold flex items-center gap-1 ${
+                    className={`px-2 py-0.5 text-[11px] font-bold flex items-center gap-1 cursor-pointer ${
                       activeTool === 'add_pole_planned'
                         ? 'bg-red-600 text-white'
-                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                        : activeTool === 'add_pole_existing'
+                        ? 'bg-slate-600 text-white'
+                        : 'text-slate-200 hover:bg-slate-700'
                     }`}
+                    title="Klik untuk menaruh titik Tiang pada peta"
                   >
-                    <span className="w-2 h-2 rounded-full bg-red-300" />
-                    +Tiang Rencana
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        polePlacementKind === 'TIANG_RENCANA'
+                          ? 'bg-red-400'
+                          : 'bg-slate-950 border border-white'
+                      }`}
+                    />
+                    <span>+Tiang</span>
                   </button>
+                  <select
+                    aria-label="Pilih Jenis dan Status Tiang"
+                    value={`${polePlacementKind}__${selectedPoleMaterial}`}
+                    onChange={(e) => {
+                      const [kindPart, matPart] = e.target.value.split('__') as [
+                        'TIANG_RENCANA' | 'TIANG_EKSISTING',
+                        'BETON' | 'BESI',
+                      ];
+                      setPolePlacementKind(kindPart);
+                      setSelectedPoleMaterial(matPart);
+                      setActiveTool(
+                        kindPart === 'TIANG_RENCANA'
+                          ? 'add_pole_planned'
+                          : 'add_pole_existing'
+                      );
+                      if (
+                        selectedNode &&
+                        selectedNode.kind !== 'GARDU_RENCANA' &&
+                        selectedNode.kind !== 'GARDU_TRAFO'
+                      ) {
+                        const nextNodes = nodes.map((n) =>
+                          n.id === selectedNode.id
+                            ? { ...n, kind: kindPart, poleMaterial: matPart }
+                            : n
+                        );
+                        commitGraphUpdate(nextNodes, spans, false);
+                      }
+                    }}
+                    className="bg-slate-900 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 border-l border-slate-700 focus:outline-none cursor-pointer"
+                    title="Pilih Spesifikasi Simbol Tiang (Rencana/Eksisting & Beton ⊗ / Besi ●)"
+                  >
+                    <option value="TIANG_RENCANA__BETON">Baru • ⊗ Beton</option>
+                    <option value="TIANG_RENCANA__BESI">Baru • ● Besi</option>
+                    <option value="TIANG_EKSISTING__BETON">Eks • ⊗ Beton</option>
+                    <option value="TIANG_EKSISTING__BESI">Eks • ● Besi</option>
+                  </select>
+                </div>
+
+                {/* 3. Compact Trafo Tool + Dropdown Fasa & Status Trafo */}
+                <div className="inline-flex items-center rounded border border-slate-700 bg-slate-800 overflow-hidden">
                   <button
                     type="button"
                     onClick={() => {
-                      setPolePlacementKind('TIANG_EKSISTING');
-                      setActiveTool('add_pole_existing');
+                      setActiveTool(
+                        activeTool === 'add_gardu_existing'
+                          ? 'add_gardu_existing'
+                          : 'add_gardu_planned'
+                      );
                     }}
-                    className={`px-2.5 py-1 text-[11px] font-bold border-l border-slate-700 flex items-center gap-1 ${
-                      activeTool === 'add_pole_existing'
-                        ? 'bg-slate-600 text-white'
-                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                    }`}
-                  >
-                    <span className="w-2 h-2 rounded-full bg-slate-950 border border-white" />
-                    +Eksisting
-                  </button>
-                </div>
-
-                {/* +Gardu Rencana / Eksisting */}
-                <div className="inline-flex items-center rounded overflow-hidden border border-slate-700">
-                  <button
-                    type="button"
-                    onClick={() => setActiveTool('add_gardu_planned')}
-                    className={`px-2 py-1 text-[11px] font-bold ${
+                    className={`px-2 py-0.5 text-[11px] font-bold flex items-center gap-1 cursor-pointer ${
                       activeTool === 'add_gardu_planned'
                         ? 'bg-red-600 text-white'
-                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                    }`}
-                  >
-                    ▲ +Gardu Rencana
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTool('add_gardu_existing')}
-                    className={`px-2 py-1 text-[11px] font-bold border-l border-slate-700 ${
-                      activeTool === 'add_gardu_existing'
+                        : activeTool === 'add_gardu_existing'
                         ? 'bg-slate-600 text-white'
-                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                        : 'text-slate-200 hover:bg-slate-700'
                     }`}
+                    title="Klik untuk menaruh titik Trafo pada peta"
                   >
-                    ▲ Eksisting
+                    <span>▲ +Trafo</span>
                   </button>
+                  <select
+                    aria-label="Pilih Jenis dan Fasa Trafo"
+                    value={`${
+                      activeTool === 'add_gardu_existing'
+                        ? 'GARDU_TRAFO'
+                        : 'GARDU_RENCANA'
+                    }__${selectedTrafoPhase}`}
+                    onChange={(e) => {
+                      const [gKind, phStr] = e.target.value.split('__');
+                      const ph = (Number(phStr) === 1 ? 1 : 3) as 1 | 3;
+                      setSelectedTrafoPhase(ph);
+                      setActiveTool(
+                        gKind === 'GARDU_TRAFO'
+                          ? 'add_gardu_existing'
+                          : 'add_gardu_planned'
+                      );
+                      if (
+                        selectedNode &&
+                        (selectedNode.kind === 'GARDU_RENCANA' ||
+                          selectedNode.kind === 'GARDU_TRAFO')
+                      ) {
+                        const nextNodes = nodes.map((n) =>
+                          n.id === selectedNode.id
+                            ? {
+                                ...n,
+                                kind: gKind as 'GARDU_RENCANA' | 'GARDU_TRAFO',
+                                trafoPhase: ph,
+                                hasFco: false,
+                              }
+                            : n
+                        );
+                        commitGraphUpdate(nextNodes, spans, false);
+                      }
+                    }}
+                    className="bg-slate-900 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 border-l border-slate-700 focus:outline-none cursor-pointer"
+                    title="Pilih Spesifikasi Simbol Trafo (1 Phase ▲ / 3 Phase ▲▲▲)"
+                  >
+                    <option value="GARDU_RENCANA__3">Baru • ▲▲▲ 3Ø</option>
+                    <option value="GARDU_RENCANA__1">Baru • ▲ 1Ø</option>
+                    <option value="GARDU_TRAFO__3">Eks • ▲▲▲ 3Ø</option>
+                    <option value="GARDU_TRAFO__1">Eks • ▲ 1Ø</option>
+                  </select>
                 </div>
 
-                {/* Cable Tool & Spec Selectors */}
-                <div className="inline-flex items-center gap-1 bg-slate-800 border border-slate-700 rounded px-2 py-0.5">
+                {/* 4. Compact Kabel Tool + Dropdown Konduktor, Fasa & Status */}
+                <div className="inline-flex items-center rounded border border-slate-700 bg-slate-800 overflow-hidden">
                   <button
                     type="button"
                     onClick={() => {
                       setActiveTool('add_cable');
                       setCableStartNodeId(null);
                     }}
-                    className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                    className={`px-2 py-0.5 text-[11px] font-bold cursor-pointer ${
                       activeTool === 'add_cable'
                         ? 'bg-cyan-600 text-white'
                         : 'text-cyan-300 hover:bg-slate-700'
                     }`}
+                    title="Tarik Kabel Antar Titik"
                   >
-                    ━ Tarik Kabel
+                    ━ Kabel
                   </button>
                   <select
+                    aria-label="Pilih Jenis Konduktor Kabel"
                     value={selectedConductorType}
-                    onChange={(e) =>
-                      setSelectedConductorType(
-                        e.target.value as SurveySpanConductorType
-                      )
-                    }
-                    className="bg-slate-900 text-white text-[11px] font-bold rounded px-1.5 py-0.5 border border-slate-700"
+                    onChange={(e) => {
+                      const nextCond = e.target.value as SurveySpanConductorType;
+                      setSelectedConductorType(nextCond);
+                      setSelectedPhaseCount(
+                        inferPhaseCountFromConductor(nextCond)
+                      );
+                      setActiveTool('add_cable');
+                    }}
+                    className="bg-slate-900 text-white text-[10px] font-bold px-1.5 py-0.5 border-l border-slate-700 max-w-[155px] truncate focus:outline-none cursor-pointer"
                   >
                     {CONDUCTOR_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -3285,13 +4201,31 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                   </select>
                   <button
                     type="button"
-                    onClick={() =>
-                      setSelectedPhaseCount((prev) => (prev === 3 ? 1 : 3))
-                    }
-                    className="px-1.5 py-0.5 rounded bg-indigo-900/80 border border-indigo-500/40 text-indigo-200 text-[10px] font-extrabold"
-                    title="Ubah Fasa Kabel (3 Phase /// vs 1 Phase /)"
+                    onClick={() => {
+                      const nextPhase = selectedPhaseCount === 3 ? 1 : 3;
+                      setSelectedPhaseCount(nextPhase);
+                      if (
+                        inferNetworkCategoryFromConductor(selectedConductorType) ===
+                        'JTR'
+                      ) {
+                        if (
+                          nextPhase === 1 &&
+                          selectedConductorType.includes('3x')
+                        ) {
+                          setSelectedConductorType('NFA2X-T 2x70');
+                        } else if (
+                          nextPhase === 3 &&
+                          selectedConductorType.includes('2x')
+                        ) {
+                          setSelectedConductorType('NFA2X-T 3x70+1x70');
+                        }
+                      }
+                      setActiveTool('add_cable');
+                    }}
+                    className="px-1.5 py-0.5 bg-indigo-950 text-indigo-200 border-l border-slate-700 text-[10px] font-extrabold hover:bg-indigo-900 cursor-pointer"
+                    title="Ubah Fasa Kabel (3Ø / 1Ø)"
                   >
-                    {selectedPhaseCount === 3 ? '3Ø (///)' : '1Ø (/)'}
+                    {selectedPhaseCount === 3 ? '3Ø' : '1Ø'}
                   </button>
                   <button
                     type="button"
@@ -3300,19 +4234,18 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                         prev === 'RENCANA' ? 'EKSISTING' : 'RENCANA'
                       )
                     }
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold ${
+                    className={`px-1.5 py-0.5 border-l border-slate-700 text-[10px] font-extrabold cursor-pointer ${
                       selectedStatusJaringan === 'RENCANA'
-                        ? 'bg-red-900/80 text-red-200 border border-red-500/40'
+                        ? 'bg-red-950 text-red-200'
                         : 'bg-slate-700 text-slate-200'
                     }`}
+                    title="Status Kabel: Baru (Merah) atau Eksisting (Hitam)"
                   >
-                    {selectedStatusJaringan === 'RENCANA'
-                      ? 'Rencana'
-                      : 'Eksisting'}
+                    {selectedStatusJaringan === 'RENCANA' ? 'Baru' : 'Eks'}
                   </button>
                 </div>
 
-                {/* Mode Tandai Bongkar */}
+                {/* 5. Mode Bongkar & Hapus */}
                 <button
                   type="button"
                   onClick={() => {
@@ -3321,16 +4254,16 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                     );
                     setCableStartNodeId(null);
                   }}
-                  className={`px-2.5 py-1 rounded text-[11px] font-extrabold border transition-all ${
+                  className={`px-2 py-0.5 rounded text-[11px] font-extrabold border transition cursor-pointer ${
                     activeTool === 'bongkar'
-                      ? 'bg-red-600 text-white border-red-400 shadow-sm'
+                      ? 'bg-red-600 text-white border-red-400'
                       : 'bg-slate-800 text-red-300 border-red-800/60 hover:bg-red-950/60'
                   }`}
+                  title="Tandai Bongkar (X)"
                 >
-                  ✕ Tandai Bongkar
+                  ✕ Bongkar
                 </button>
 
-                {/* Mode Hapus */}
                 <button
                   type="button"
                   onClick={() => {
@@ -3339,56 +4272,19 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                     );
                     setCableStartNodeId(null);
                   }}
-                  className={`px-2.5 py-1 rounded text-[11px] font-bold ${
+                  className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
                     activeTool === 'delete'
                       ? 'bg-rose-600 text-white'
                       : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                   }`}
+                  title="Hapus Titik/Kabel (Atau tekan tombol Delete di keyboard)"
                 >
-                  🗑 Hapus
-                </button>
-              </div>
-
-              {/* Right Quick Controls */}
-              <div className="flex flex-wrap items-center gap-1.5">
-                <label className="inline-flex items-center gap-1 text-[11px] text-slate-300 bg-slate-800 px-2 py-1 rounded cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={autoConnectCable}
-                    onChange={(e) => setAutoConnectCable(e.target.checked)}
-                    className="rounded text-indigo-600"
-                  />
-                  <span>Auto-Sambung Kabel</span>
-                </label>
-
-                <button
-                  type="button"
-                  onClick={handleQuickAddPole40m}
-                  className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-extrabold"
-                >
-                  +Tiang 40m
+                  🗑
                 </button>
 
-                <button
-                  type="button"
-                  onClick={handleUndo}
-                  disabled={undoStack.length === 0}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-[11px] font-bold"
-                  title="Undo (Ctrl+Z)"
-                >
-                  <Undo2 className="w-3.5 h-3.5" />
-                  Undo ({undoStack.length})
-                </button>
+                <span className="h-3.5 w-px bg-slate-700 mx-0.5" />
 
-                <button
-                  type="button"
-                  onClick={handleResetCanvas}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800 hover:bg-red-900/70 text-slate-300 text-[11px] font-bold"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  Reset
-                </button>
-
+                {/* 6. Satelit, Layar Penuh & Lipat Toolbar */}
                 <button
                   type="button"
                   onClick={() =>
@@ -3396,102 +4292,49 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                       prev === 'street' ? 'satellite' : 'street'
                     )
                   }
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-bold cursor-pointer"
+                  title="Ganti Peta Jalan / Satelit"
                 >
-                  <Layers className="w-3.5 h-3.5 text-cyan-400" />
-                  {tileLayerMode === 'street' ? 'Satelit' : 'Peta Jalan'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setCalloutCompactMode((p) => !p)}
-                  className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold"
-                >
-                  Label: {calloutCompactMode ? 'Ringkas' : 'Lengkap'}
+                  <Layers className="w-3 h-3 text-cyan-400" />
+                  {tileLayerMode === 'street' ? 'Satelit' : 'Peta'}
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setIsFullscreen((prev) => !prev)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-extrabold"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-extrabold cursor-pointer"
+                  title={isFullscreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}
                 >
                   {isFullscreen ? (
-                    <>
-                      <Minimize2 className="w-3.5 h-3.5" />
-                      Keluar Layar Penuh
-                    </>
+                    <Minimize2 className="w-3 h-3" />
                   ) : (
-                    <>
-                      <Maximize2 className="w-3.5 h-3.5" />
-                      Layar Penuh
-                    </>
+                    <Maximize2 className="w-3 h-3" />
                   )}
+                  <span>{isFullscreen ? 'Kecilkan' : 'Penuh'}</span>
                 </button>
-              </div>
-            </div>
 
-            {/* Row 2: Legend & Active Mode Helper */}
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800 text-[11px]">
-              <div className="flex flex-wrap items-center gap-3 text-slate-300">
                 <button
                   type="button"
-                  onClick={() => setShowLegend((p) => !p)}
-                  className="font-bold text-amber-300 hover:underline"
+                  onClick={() => setIsToolbarCollapsed(true)}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white text-[10px] font-bold cursor-pointer"
+                  title="Sembunyikan/Lipat Toolbar agar Kanvas Lebih Luas"
                 >
-                  {showLegend ? '▾ Legenda Jaringan:' : '▸ Legenda Jaringan'}
+                  ▴
                 </button>
-                {showLegend && (
-                  <>
-                    <span className="inline-flex items-center gap-1">
-                      <span className="w-3 h-1 bg-red-600 inline-block" />{' '}
-                      {cableLegendLengths.jtmMeters > 0
-                        ? `${cableLegendLengths.jtmMeters}m`
-                        : `${cableLegendLengths.plannedMeters}m`}
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <span className="w-3 h-1 bg-sky-600 inline-block" />{' '}
-                      {cableLegendLengths.jtrPlannedMeters > 0
-                        ? `${cableLegendLengths.jtrPlannedMeters}m`
-                        : `${cableLegendLengths.jtrMeters}m`}
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <span className="w-3 h-1 bg-amber-600 inline-block" /> {cableLegendLengths.srMeters}m
-                    </span>
-                    <span className="text-slate-400">
-                      <strong>///</strong> = 3 Phase • <strong>/</strong> = 1 Phase
-                    </span>
-                    <span className="text-red-400 font-bold">
-                      ✕ = Konstruksi / Kabel Dibongkar
-                    </span>
-                  </>
-                )}
               </div>
-
-              <div className="text-slate-400">
-                {activeTool === 'add_cable' && cableStartNodeId ? (
-                  <span className="text-amber-300 font-bold">
-                    Pilih tiang tujuan untuk menarik kabel dari titik awal...
-                  </span>
-                ) : activeTool === 'bongkar' ? (
-                  <span className="text-red-300 font-bold">
-                    Mode Bongkar Aktif: Klik tiang atau jalur kabel untuk
-                    memberi tanda ✕ Merah (Bongkar).
-                  </span>
-                ) : (
-                  <span>
-                    Klik peta untuk menaruh tiang • Geser kotak label untuk
-                    merapikan • Klik titik/kabel untuk rincian KHS
-                  </span>
-                )}
-              </div>
-            </div>
+            )}
           </div>
 
-          {/* Map Canvas Container */}
+          {/* Map Canvas Container (Static className on mapContainerRef so React never strips leaflet-container) */}
           <div
-            ref={mapContainerRef}
-            className={isFullscreen ? 'flex-1 w-full' : 'w-full h-[560px]'}
-          />
+            className={
+              isFullscreen
+                ? 'w-full flex-1 h-full overflow-hidden'
+                : 'w-full h-[76vh] min-h-[680px] rounded-xl overflow-hidden'
+            }
+          >
+            <div ref={mapContainerRef} className="w-full h-full" />
+          </div>
 
           {/* Floating Bottom-Right Inspector Panel inside GIS Map */}
           {(selectedNode || selectedSpan) && (
@@ -3603,16 +4446,16 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                         className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs font-bold text-white"
                       >
                         <option value="TIANG_RENCANA">
-                          Tiang Rencana (Merah)
+                          Tiang Baru (Merah)
                         </option>
                         <option value="TIANG_EKSISTING">
                           Tiang Eksisting (Hitam)
                         </option>
                         <option value="GARDU_RENCANA">
-                          Gardu Rencana (▲ Merah)
+                          Trafo Baru (▲ Merah)
                         </option>
                         <option value="GARDU_TRAFO">
-                          Gardu Eksisting (▲ Hitam)
+                          Trafo Eksisting (▲ Hitam)
                         </option>
                       </select>
                     </div>
@@ -4001,7 +4844,23 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                         <div>
                           <p className="font-bold text-white text-[11px]">
                             {cab.conductorType} •{' '}
-                            {cab.phaseCount === 1 ? '1Ø (/)' : '3Ø (///)'}
+                            {inferPhaseCountFromConductor(
+                              cab.conductorType,
+                              cab.phaseCount
+                            ) === 1
+                              ? '1 Fasa'
+                              : '3 Fasa'}{' '}
+                            {getPhaseSlashSymbol(
+                              cab.phaseCount || 3,
+                              cab.jenisJaringan,
+                              cab.conductorType
+                            )
+                              ? `(${getPhaseSlashSymbol(
+                                  cab.phaseCount || 3,
+                                  cab.jenisJaringan,
+                                  cab.conductorType
+                                )})`
+                              : ''}
                           </p>
                           <p className="text-[10px] text-slate-400">
                             Status: {cab.statusJaringan} •{' '}
@@ -4193,7 +5052,16 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                 className="ml-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-2xs cursor-pointer"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                Simpan Gambar &amp; RAB
+                Simpan
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadSurveyBundle}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-2xs cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download
               </button>
 
               <button
@@ -4389,7 +5257,15 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-sm cursor-pointer"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  Simpan RAB &amp; Gambar
+                  Simpan
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadSurveyBundle}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-sm cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download
                 </button>
               </div>
             </div>
@@ -4423,58 +5299,28 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {/* Quick Page Count Selector for Surat Permohonan */}
-                <div className="inline-flex items-center gap-1 bg-slate-100 px-2 py-1 rounded-lg border border-slate-300 text-xs">
-                  <span className="font-bold text-slate-700 text-[11px]">Jumlah Hal. Surat:</span>
-                  {[1, 2, 3, 4].map((cnt) => (
-                    <button
-                      key={cnt}
-                      type="button"
-                      onClick={() => handleSetSuratPageCount(cnt)}
-                      className={`px-2 py-0.5 rounded font-extrabold text-[11px] transition cursor-pointer ${
-                        totalSuratPages === cnt
-                          ? 'bg-indigo-600 text-white shadow-2xs'
-                          : 'bg-white text-slate-700 hover:bg-slate-200 border border-slate-300'
-                      }`}
-                    >
-                      {cnt} Hal
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={handleAddFormalSuratPage}
-                    className="px-2 py-0.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-950 font-extrabold text-[11px] border border-amber-300 cursor-pointer"
-                    title="Tambah 1 Halaman Lampiran Surat Permohonan"
-                  >
-                    + Hal Surat
-                  </button>
-                </div>
-
-                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-xs font-bold cursor-pointer transition">
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>Upload Scan/PDF Surat</span>
-                  <input
-                    type="file"
-                    accept="image/*,.pdf"
-                    multiple
-                    onChange={handleUploadSuratPage}
-                    className="hidden"
-                  />
-                </label>
-
                 <button
                   type="button"
                   onClick={() => handleGenerateAndApplyRab(false)}
                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-sm cursor-pointer"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Simpan Bundel, Gambar &amp; RAB</span>
+                  <span>Simpan</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleDownloadSurveyBundle}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-sm cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold shadow-sm cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-extrabold shadow-sm cursor-pointer"
                 >
                   <Printer className="w-4 h-4" />
                   Cetak PDF ({totalBundelPages} Hal)
@@ -4482,12 +5328,15 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               </div>
             </div>
 
-            {/* HALAMAN 1 s/d totalSuratPages: SURAT PERMOHONAN RESMI (SESUAI JUMLAH HALAMAN SURAT) */}
+            {/* HALAMAN 1 s/d totalSuratPages: SURAT PERMOHONAN RESMI (TAMPIL SAMA PERSIS SESUAI BERKAS YANG DIUPLOAD) */}
             {Array.from({ length: totalSuratPages }).map((_, pIdx) => {
               const pageNumber = pIdx + 1;
               const pageData = attachedSuratPages[pIdx];
               const isFormalPlaceholder = !pageData || pageData.startsWith('FORMAL_PAGE_');
               const isPdfDataUrl = Boolean(pageData && pageData.startsWith('data:application/pdf'));
+              const isImageDataUrl = Boolean(pageData && pageData.startsWith('data:image/'));
+              const isOtherFileDataUrl = Boolean(!isFormalPlaceholder && !isPdfDataUrl && !isImageDataUrl);
+              const resolvedPdfBlobUrl = pdfBlobUrls[pIdx] || pageData;
               const hasFailedImg = Boolean(failedImageIndices[pIdx]);
 
               return (
@@ -4510,42 +5359,57 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-slate-600">
-                        No. Surat: {item.suratPermohonan || '-'} • {item.tglSurat}
+                        Berkas: {item.suratPermohonan || '-'} • {item.tglSurat}
                       </span>
-                      {totalSuratPages > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveSuratPage(pIdx)}
-                          className="px-2 py-1 rounded bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 text-[11px] font-bold cursor-pointer"
-                        >
-                          ✕ Hapus Hal. {pageNumber}
-                        </button>
-                      )}
                     </div>
                   </div>
 
-                  {/* Uploaded PDF or Image Scan if provided */}
-                  {!isFormalPlaceholder && isPdfDataUrl ? (
+                  {/* Uploaded PDF, Image Scan, or Any File rendered faithfully */}
+                  {!isFormalPlaceholder && (isPdfDataUrl || isOtherFileDataUrl) ? (
                     <div className="border border-slate-300 rounded p-2 bg-slate-50 space-y-2">
                       <div className="flex items-center justify-between text-xs px-2 text-slate-700 font-bold">
-                        <span>Dokumen PDF Surat Permohonan (Halaman {pageNumber}):</span>
+                        <span>
+                          Dokumen Surat Permohonan Terlampir (Halaman {pageNumber} — {item.suratPermohonan}):
+                        </span>
+                        <a
+                          href={resolvedPdfBlobUrl}
+                          download={item.suratPermohonan || `Surat_Permohonan_Hal_${pageNumber}`}
+                          className="text-indigo-600 hover:underline text-[11px] font-extrabold"
+                        >
+                          Unduh Berkas Asli
+                        </a>
                       </div>
-                      <iframe
-                        src={pageData}
-                        title={`PDF Surat Permohonan Halaman ${pageNumber}`}
-                        className="w-full h-[640px] rounded border border-slate-300 bg-white"
-                      />
+                      <object
+                        data={resolvedPdfBlobUrl}
+                        type={isPdfDataUrl ? 'application/pdf' : undefined}
+                        className="w-full h-[760px] rounded border border-slate-300 bg-white"
+                      >
+                        <embed
+                          src={resolvedPdfBlobUrl}
+                          type={isPdfDataUrl ? 'application/pdf' : undefined}
+                          className="w-full h-[760px] rounded border border-slate-300 bg-white"
+                        />
+                      </object>
                     </div>
                   ) : !isFormalPlaceholder && !hasFailedImg ? (
                     <div className="border border-slate-300 rounded p-2 bg-slate-50 space-y-2">
                       <div className="flex items-center justify-between text-xs px-2 text-slate-600">
-                        <span className="font-bold">Scan Dokumen Surat Permohonan Halaman {pageNumber}:</span>
+                        <span className="font-bold">
+                          Berkas / Scan Surat Permohonan Halaman {pageNumber} ({item.suratPermohonan}):
+                        </span>
+                        <a
+                          href={pageData}
+                          download={item.suratPermohonan || `Surat_Permohonan_Hal_${pageNumber}.png`}
+                          className="text-indigo-600 hover:underline text-[11px] font-extrabold"
+                        >
+                          Unduh Gambar Asli
+                        </a>
                       </div>
                       <img
                         src={pageData}
                         alt={`Lampiran Surat Permohonan Lembar ${pageNumber}`}
                         onError={() => setFailedImageIndices((prev) => ({ ...prev, [pIdx]: true }))}
-                        className="max-h-[640px] w-auto mx-auto object-contain rounded border border-slate-200 shadow-xs"
+                        className="max-h-[760px] w-auto mx-auto object-contain rounded border border-slate-200 shadow-xs"
                       />
                     </div>
                   ) : pIdx === 0 ? (
@@ -4749,7 +5613,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                   {rabSummary.grandTotal.toLocaleString('id-ID')}
                 </span>
               </div>
-              {renderOfficialRabTable(true)}
+              {renderOfficialRabTable(readOnly)}
             </div>
 
             {/* HALAMAN totalSuratPages + 2: GAMBAR SKETSA SURVEI BER-ETIKET PLN */}

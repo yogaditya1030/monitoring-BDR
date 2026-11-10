@@ -330,9 +330,11 @@ export const PermohonanDetailModal: React.FC<DetailModalProps> = ({
               <div className="grid grid-cols-3 gap-1">
                 <span className="text-slate-500">Status Survei:</span>
                 <span className="col-span-2 font-bold text-amber-900">
-                  {item.tglSurvei || item.nomorTiang || item.nomorGardu
-                    ? `✓ Sudah Survei (${item.tglSurvei || 'Selesai'})`
-                    : '⏳ Menunggu Survei Lapangan'}
+                  {item.surveyRabDesign &&
+                  ((item.surveyRabDesign.nodes && item.surveyRabDesign.nodes.length > 0) ||
+                    (item.surveyRabDesign.rabItems && item.surveyRabDesign.rabItems.length > 0))
+                    ? `✓ Sudah Disurvei (${item.surveyRabDesign.nodes?.length || 0} Titik)`
+                    : '⏳ Menunggu Data Survei'}
                 </span>
               </div>
               <div className="grid grid-cols-3 gap-1">

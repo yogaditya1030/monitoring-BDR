@@ -163,6 +163,13 @@ export interface SurveyPoleNode {
   lat: number;
   lng: number;
   constructions: SurveyPoleConstructionAssignment[];
+  poleMaterial?: 'BETON' | 'BESI'; // 'BETON' = Lingkaran silang (⊗), 'BESI' = Lingkaran penuh (●)
+  trafoPhase?: 1 | 3; // 1 = Segitiga tunggal (▲), 3 = Tiga segitiga (▲▲▲)
+  hasFco?: boolean; // Simbol Fuse Cut Out (S/)
+  hasAbsw?: boolean; // Simbol ABSW (──| |──)
+  hasSchoor?: boolean; // Simbol Schoor / Skur panah miring (↗)
+  schoorAngleDeg?: number; // Sudut arah tarikan Anchor / Schoor pertama dalam derajat (default -35°)
+  schoorAngleDegList?: number[]; // Daftar sudut arah tarikan untuk 1, 2, atau lebih Anchor / Skur pada satu titik tiang (e.g. [-35, 55])
   isBongkar?: boolean; // Menandai bahwa titik/konstruksi ini akan dibongkar (Simbol X Merah di Peta)
   catatan?: string;
 }
@@ -173,6 +180,7 @@ export type SurveySpanConductorType =
   | 'NFA2X-T 3x35+1x35'
   | 'NFA2X-T 2x70'
   | 'NFA2X-T 2x35'
+  | 'NFA2X 2x10'
   | 'NFA2X 2x16'
   | 'NFA2X 4x16'
   | 'AAAC 70'
@@ -181,7 +189,8 @@ export type SurveySpanConductorType =
   | 'AAAC/S 70'
   | 'AAAC/S 150'
   | 'AAAC/S 240'
-  | 'MVTIC 3x240+N95';
+  | 'MVTIC 3x240+N95'
+  | 'VANG_NET';
 
 export type NetworkCategory = 'JTM' | 'JTR' | 'SR';
 

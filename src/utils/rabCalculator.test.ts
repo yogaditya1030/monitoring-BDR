@@ -24,6 +24,11 @@ import {
   rectsOverlap,
   normalizeRabPackageItems,
   buildConnectedEtiketRoadNetwork,
+  resolveNodeDrawingSymbol,
+  buildNodeMarkerSvg,
+  inferNetworkCategoryFromConductor,
+  getActiveLegendItems,
+  formatDateDdMmYyyy,
 } from './rabCalculator';
 import {
   PRESET_SMPN3_PABELAN_NODES,
@@ -58,34 +63,75 @@ test('formatPoleCalloutLines formats construction codes matching PLN survey draw
   ]);
 });
 
-test('getCableVisualStyle differentiates JTM, JTR, and SR with distinct colors and dash patterns', () => {
-  const jtmStyle = getCableVisualStyle('JTM', 'RENCANA');
-  const jtrStyle = getCableVisualStyle('JTR', 'RENCANA');
-  const srStyle = getCableVisualStyle('SR', 'RENCANA');
+test('getCableVisualStyle follows official PLN Keterangan Gambar reference (Baru = Red #dc2626, Eksisting = Black #0f172a, Vang Net = Blue #0284c7, JTM 1Ø = dashed, MVTIC = dash-dot-dot)', () => {
+  const jtm3Baru = getCableVisualStyle('JTM', 'RENCANA', 'AAAC 70', 3);
+  const jtm3Eks = getCableVisualStyle('JTM', 'EKSISTING', 'AAAC 70', 3);
+  const jtm1Baru = getCableVisualStyle('JTM', 'RENCANA', 'AAAC 70', 1);
+  const jtr1Baru = getCableVisualStyle('JTR', 'RENCANA', 'NFA2X-T 2x70', 1);
+  const jtr3Baru = getCableVisualStyle('JTR', 'RENCANA', 'NFA2X-T 3x70+1x70', 3);
+  const mvticBaru = getCableVisualStyle('JTM', 'RENCANA', 'MVTIC 3x240+N95', 3);
+  const vangNetBaru = getCableVisualStyle('JTM', 'RENCANA', 'VANG_NET', 3);
+  const vangNetEks = getCableVisualStyle('JTM', 'EKSISTING', 'VANG_NET', 3);
 
-  assert.notEqual(jtmStyle.strokeColor, jtrStyle.strokeColor);
-  assert.notEqual(jtrStyle.strokeColor, srStyle.strokeColor);
-  assert.notEqual(jtmStyle.strokeColor, srStyle.strokeColor);
-  assert.equal(jtmStyle.strokeColor, '#dc2626'); // Red for JTM 20kV
-  assert.equal(jtrStyle.strokeColor, '#0284c7'); // Blue/Cyan for JTR LVTC
-  assert.equal(srStyle.strokeColor, '#d97706'); // Amber for SR
-  assert.ok(srStyle.dashArray, 'SR cable should use dashed line pattern');
+  assert.equal(jtm3Baru.strokeColor, '#dc2626');
+  assert.equal(jtm3Eks.strokeColor, '#0f172a');
+  assert.equal(jtm3Baru.dashArray, undefined);
+  assert.equal(jtm1Baru.dashArray, '8, 5');
+  assert.equal(jtr1Baru.strokeColor, '#dc2626');
+  assert.equal(jtr3Baru.strokeColor, '#dc2626');
+  assert.equal(mvticBaru.dashArray, '10, 4, 2, 4, 2, 4');
+  assert.equal(vangNetBaru.strokeColor, '#0284c7');
+  assert.equal(vangNetEks.strokeColor, '#0284c7');
 });
 
-test('1-Phase (/) vs 3-Phase (///) cable slash marks and phase-aware RAB calculation for JTM & JTR', () => {
+test('Official PLN JTR 1-Phase (///) vs 3-Phase (////) cable slash marks, JTM no-slash rule, and CC10 volume multiplication', () => {
   assert.equal(inferPhaseCountFromConductor('NFA2X-T 3x70+1x70'), 3);
   assert.equal(inferPhaseCountFromConductor('NFA2X-T 2x70'), 1);
   assert.equal(inferPhaseCountFromConductor('AAAC 70', 1), 1);
   assert.equal(inferPhaseCountFromConductor('AAAC 70', 3), 3);
 
-  assert.equal(getPhaseSlashSymbol(1), '/');
-  assert.equal(getPhaseSlashSymbol(3), '///');
+  // Per official PLN Keterangan Gambar:
+  // JTR 1 Fasa Only / UB = 3 slashes (///), JTR 3 Fasa Only / UB = 4 slashes (////), JTM = no slashes
+  assert.equal(getPhaseSlashSymbol(1, 'JTR'), '///');
+  assert.equal(getPhaseSlashSymbol(3, 'JTR'), '////');
+  assert.equal(getPhaseSlashSymbol(1, 'JTM'), '');
+  assert.equal(getPhaseSlashSymbol(3, 'JTM'), '');
 
-  const svg1Phase = buildPhaseSlashSvg(1, '#dc2626', 0);
-  const svg3Phase = buildPhaseSlashSvg(3, '#dc2626', 0);
-  // 1-Phase has 2 <line> elements (1 halo + 1 stroke); 3-Phase has 6 <line> elements (3 halos + 3 strokes)
-  assert.equal((svg1Phase.match(/<line /g) || []).length, 2);
-  assert.equal((svg3Phase.match(/<line /g) || []).length, 6);
+  const svg1PhaseJtr = buildPhaseSlashSvg(1, '#dc2626', 0, 'JTR');
+  const svg3PhaseJtr = buildPhaseSlashSvg(3, '#dc2626', 0, 'JTR');
+  const svgJtm = buildPhaseSlashSvg(3, '#dc2626', 0, 'JTM');
+  // 1-Phase JTR has 3 ticks (6 <line> elements); 3-Phase JTR has 4 ticks (8 <line> elements); JTM has 0
+  assert.equal((svg1PhaseJtr.match(/<line /g) || []).length, 6);
+  assert.equal((svg3PhaseJtr.match(/<line /g) || []).length, 8);
+  assert.equal(svgJtm, '');
+
+  // Verify CC10 package header volume multiplication in Section II (JTM)
+  const cc10Items = generateRabItemsFromSurvey({
+    nodes: [
+      {
+        id: 'node-cc10',
+        kodeTiang: 'SA4-20/2',
+        kind: 'TIANG_RENCANA',
+        lat: -7.5818,
+        lng: 110.25716,
+        constructions: [{ code: 'CC10', qty: 1, actionType: 'PASANG' }],
+      },
+    ],
+    spans: [],
+    includePembetonanTiang: false,
+    transportasiRit: 0,
+  });
+  const cc10Header = cc10Items.find((i) => i.isPackageHeader && i.uraian === 'CC10')!;
+  assert.ok(cc10Header, 'Should generate CC10 package header in Section II');
+  const updatedCc10 = updateRabPackageHeaderVolume(cc10Items, cc10Header.id, 3);
+  const cc10Children = updatedCc10.filter(
+    (i) => !i.isPackageHeader && i.parentPackageCode === 'CC10'
+  );
+  assert.ok(cc10Children.length >= 5);
+  // First detail item of CC10 is Isolator Tumpu (3 Bh/set) -> 3 * 3 = 9 Bh
+  assert.equal(cc10Children[0].volume, 9);
+  // Second detail item of CC10 is Cross Arm Steel 3.000 mm (1 Bh/set) -> 1 * 3 = 3 Bh
+  assert.equal(cc10Children[1].volume, 3);
 
   // Verify 1-Phase JTM AAAC 70 uses 1 wire (50m * 1 * 1.03 = 52m) vs 3-Phase (50m * 3 * 1.03 = 155m)
   const items1PhaseJtm = generateRabItemsFromSurvey({
@@ -802,4 +848,195 @@ test('buildConnectedEtiketRoadNetwork creates a continuous main road through an 
   assert.equal(onMainRoad, true, 'Branch road start must lie directly on a main road vertex');
 });
 
+test('SR 2x10 (NFA2X 2x10) conductor and adjustable Schoor/Anchor pull angle + Tiang Beton/Besi symbols', () => {
+  assert.equal(inferNetworkCategoryFromConductor('NFA2X 2x10'), 'SR');
+  assert.equal(inferPhaseCountFromConductor('NFA2X 2x10'), 1);
+  assert.equal(getPhaseSlashSymbol(1, 'SR', 'NFA2X 2x10'), '///');
+
+  const sr2x10Items = generateRabItemsFromSurvey({
+    nodes: PRESET_SMPN3_PABELAN_NODES.slice(0, 2),
+    spans: [
+      {
+        id: 'sp-sr-2x10',
+        fromNodeId: 'node-ext-19',
+        toNodeId: 'node-ext-20',
+        statusJaringan: 'RENCANA',
+        jenisJaringan: 'SR',
+        conductorType: 'NFA2X 2x10',
+        phaseCount: 1,
+        distanceMeters: 40,
+      },
+    ],
+    includePembetonanTiang: false,
+    transportasiRit: 0,
+  });
+  const srItem = sr2x10Items.find((i) => i.uraian.includes('2x10'));
+  assert.ok(srItem, 'Should generate RAB item for SR 2x10');
+  assert.equal(srItem.volume, 42); // 40m * 1.05 = 42m
+
+  // Check adjustable Schoor angle and Tiang Besi vs Beton symbol
+  const nodeWithAnchor = {
+    id: 'n-anchor',
+    kodeTiang: 'SA4-20/1',
+    kind: 'TIANG_RENCANA' as const,
+    poleMaterial: 'BESI' as const,
+    hasSchoor: true,
+    schoorAngleDeg: 135,
+    lat: -7.6,
+    lng: 110.2,
+    constructions: [],
+  };
+  const sym = resolveNodeDrawingSymbol(nodeWithAnchor);
+  assert.equal(sym.poleMaterial, 'BESI');
+  assert.equal(sym.hasSchoor, true);
+  assert.equal(sym.schoorAngleDeg, 135);
+
+  const svg = buildNodeMarkerSvg(nodeWithAnchor, false);
+  assert.ok(svg.includes('rotate(135)'), 'SVG marker must rotate Schoor arrow by schoorAngleDeg');
+
+  // Check 2 anchors on single pole (e.g. 2 sets at 90 degrees)
+  const nodeWith2Anchors = {
+    id: 'n-2anchors',
+    kodeTiang: 'SA4-20/2',
+    kind: 'TIANG_RENCANA' as const,
+    lat: -7.6,
+    lng: 110.2,
+    constructions: [
+      { code: 'SE1-2', qty: 2 },
+    ],
+  };
+  const sym2 = resolveNodeDrawingSymbol(nodeWith2Anchors);
+  assert.equal(sym2.hasSchoor, true);
+  assert.equal(sym2.schoorAngleDegList.length, 2, 'Must generate 2 anchor angles for 2 sets');
+  assert.equal(sym2.schoorAngleDegList[1], 55, 'Second anchor must default to baseAngle (-35) + 90 = 55 degrees');
+
+  const svg2 = buildNodeMarkerSvg(nodeWith2Anchors, false);
+  assert.ok(svg2.includes('rotate(-35)'), 'Must render first anchor arrow');
+  assert.ok(svg2.includes('rotate(55)'), 'Must render second anchor arrow at 90 deg offset');
+});
+
+test('Trafo 1-Phase and 3-Phase symbols render without pole circle and without automatic FCO', () => {
+  const trafo1P = {
+    id: 'n-trafo-1p',
+    kodeTiang: 'GD-01',
+    kind: 'GARDU_RENCANA' as const,
+    trafoPhase: 1 as const,
+    lat: -7.6,
+    lng: 110.2,
+    constructions: [],
+  };
+  const sym1P = resolveNodeDrawingSymbol(trafo1P);
+  assert.equal(sym1P.isGardu, true);
+  assert.equal(sym1P.trafoPhase, 1);
+  assert.equal(sym1P.hasFco, false, 'Trafo must not automatically enable FCO');
+
+  const svg1P = buildNodeMarkerSvg(trafo1P, false);
+  assert.equal((svg1P.match(/<polygon /g) || []).length, 1, '1-phase Trafo must render 1 triangle');
+  assert.equal((svg1P.match(/<circle /g) || []).length, 0, 'Trafo must not render pole circle when unselected');
+  assert.equal(svg1P.includes('>S<'), false, 'Trafo must not render FCO S/ symbol by default');
+
+  const trafo3P = {
+    id: 'n-trafo-3p',
+    kodeTiang: 'GD-02',
+    kind: 'GARDU_TRAFO' as const,
+    trafoPhase: 3 as const,
+    lat: -7.6,
+    lng: 110.2,
+    constructions: [],
+  };
+  const sym3P = resolveNodeDrawingSymbol(trafo3P);
+  assert.equal(sym3P.isGardu, true);
+  assert.equal(sym3P.trafoPhase, 3);
+  assert.equal(sym3P.hasFco, false);
+
+  const svg3P = buildNodeMarkerSvg(trafo3P, false);
+  assert.equal((svg3P.match(/<polygon /g) || []).length, 3, '3-phase Trafo must render 3 triangles');
+  assert.equal((svg3P.match(/<circle /g) || []).length, 0, 'Trafo must not render pole circle when unselected');
+});
+
+test('Skur (SE1-2) vs Anchor (F1-2) rule: only Skur produces arrow symbols, Anchor foundation does not double arrow count', () => {
+  // Pole with only Anchor foundation (F1-2) -> 0 arrows
+  const poleWithOnlyAnchor = {
+    id: 'n-only-f1',
+    kodeTiang: 'SA4-20/1',
+    kind: 'TIANG_RENCANA' as const,
+    lat: -7.6,
+    lng: 110.2,
+    constructions: [{ code: 'F1-2', qty: 2 }],
+  };
+  const symOnlyAnchor = resolveNodeDrawingSymbol(poleWithOnlyAnchor);
+  assert.equal(symOnlyAnchor.hasSchoor, false, 'Anchor F1-2 alone must not draw skur arrow');
+  assert.equal(symOnlyAnchor.schoorAngleDegList.length, 0);
+
+  // Pole with 2 F1-2 (Anchor) + 2 SE1-2 (Skur) -> strictly 2 arrows (not 4)
+  const poleWith2SkurAnd2Anchor = {
+    id: 'n-2skur-2anchor',
+    kodeTiang: 'SA4-20/1',
+    kind: 'TIANG_RENCANA' as const,
+    lat: -7.6,
+    lng: 110.2,
+    constructions: [
+      { code: 'F1-2', qty: 2 },
+      { code: 'SE1-2', qty: 2 },
+    ],
+  };
+  const sym2 = resolveNodeDrawingSymbol(poleWith2SkurAnd2Anchor);
+  assert.equal(sym2.hasSchoor, true);
+  assert.equal(sym2.schoorAngleDegList.length, 2, '2 F1-2 + 2 SE1-2 must render 2 skur arrows, not 4');
+});
+
+test('JTR 1-Phase (2x70 / 2x35) always renders 3 slashes (///) even if stale phaseCount=3 was passed, and dynamic legend filters to active canvas items + DD-MM-YYYY date format', () => {
+  assert.equal(inferPhaseCountFromConductor('NFA2X-T 2x70', 3), 1);
+  assert.equal(inferPhaseCountFromConductor('NFA2X-T 2x35', 3), 1);
+  assert.equal(getPhaseSlashSymbol(3, 'JTR', 'NFA2X-T 2x70'), '///');
+  assert.equal(getPhaseSlashSymbol(3, 'JTR', 'NFA2X-T 3x70+1x70'), '////');
+
+  const svg1P = buildPhaseSlashSvg(3, '#dc2626', 0, 'JTR', 'NFA2X-T 2x70');
+  assert.equal((svg1P.match(/<line /g) || []).length, 6, '2x70 JTR must render 3 ticks (6 lines)');
+
+  // Dynamic Keterangan Gambar legend test:
+  // Canvas with only Planned Tiang Beton + 1-Phase JTR + Skur SE1-2 (no existing poles, no trafo, no MVTIC)
+  const legendRows = getActiveLegendItems(
+    [
+      {
+        id: 'p1',
+        kodeTiang: 'SA4-20/1',
+        kind: 'TIANG_RENCANA',
+        lat: -7.6,
+        lng: 110.2,
+        constructions: [{ code: 'SE1-2', qty: 1 }],
+      },
+      {
+        id: 'p2',
+        kodeTiang: 'SA4-20/2',
+        kind: 'TIANG_RENCANA',
+        lat: -7.6003,
+        lng: 110.2,
+        constructions: [],
+      },
+    ],
+    [
+      {
+        id: 's1',
+        fromNodeId: 'p1',
+        toNodeId: 'p2',
+        statusJaringan: 'RENCANA',
+        jenisJaringan: 'JTR',
+        conductorType: 'NFA2X-T 2x70',
+        phaseCount: 1,
+        distanceMeters: 35,
+      },
+    ]
+  );
+
+  assert.deepEqual(
+    legendRows.map((r) => r.key),
+    ['TIANG_BETON', 'JTR_1P', 'SCHOOR']
+  );
+  assert.equal(legendRows.every((r) => r.hasBaru && !r.hasEksisting), true);
+
+  // Format date DD-MM-YYYY
+  assert.equal(formatDateDdMmYyyy('2026-11-10'), '10-11-2026');
+  assert.equal(formatDateDdMmYyyy('05-11-2026'), '05-11-2026');
+});
 

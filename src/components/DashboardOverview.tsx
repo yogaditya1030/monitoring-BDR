@@ -1019,7 +1019,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                               </div>
                             ) : (!item.rab || item.rab === 0) ? (
                               <div className="text-[10px] font-semibold text-amber-800 mt-0.5">
-                                {item.status === 'SURVEI' ? 'Sudah Survei • Belum Buat RAB' : 'Belum Ada RAB'}
+                                {item.status === 'SURVEI' ? '⏳ Menunggu Data Survei' : 'Belum Ada RAB'}
                               </div>
                             ) : null}
                           </td>

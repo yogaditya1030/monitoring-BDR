@@ -30,19 +30,32 @@ export function inferNetworkCategoryFromConductor(
   if (conductorType.includes('AAAC') || conductorType.includes('MVTIC')) {
     return 'JTM';
   }
-  if (conductorType.includes('2x16') || conductorType.includes('4x16')) {
+  if (
+    conductorType.includes('2x10') ||
+    conductorType.includes('2x16') ||
+    conductorType.includes('4x16')
+  ) {
     return 'SR';
   }
   return 'JTR';
 }
 
 /**
- * Menentukan jumlah fasa (1 Phase = 1 garis /, 3 Phase = 3 garis ///) dari jenis penghantar atau pilihan eksplisit
+ * Menentukan jumlah fasa (1 Phase = 3 garis ///, 3 Phase = 4 garis ////) dari jenis penghantar atau pilihan eksplisit
  */
 export function inferPhaseCountFromConductor(
   conductorType: SurveySpanConductorType,
   explicitPhase?: CablePhaseCount
 ): CablePhaseCount {
+  // Penghantar 2 inti (2x10, 2x16, 2x35, 2x70) secara fisik selalu 1 Fasa (///)
+  if (
+    conductorType.includes('2x10') ||
+    conductorType.includes('2x16') ||
+    conductorType.includes('2x35') ||
+    conductorType.includes('2x70')
+  ) {
+    return 1;
+  }
   if (explicitPhase === 1 || explicitPhase === 3) {
     return explicitPhase;
   }
@@ -50,28 +63,36 @@ export function inferPhaseCountFromConductor(
   if (mapped?.defaultPhase) {
     return mapped.defaultPhase;
   }
-  if (
-    conductorType.includes('2x16') ||
-    conductorType.includes('2x35') ||
-    conductorType.includes('2x70')
-  ) {
-    return 1;
-  }
   return 3;
 }
 
 /**
- * Memformat simbol garis fasa sesuai standar gambar survei PLN:
- * - 3 Phase: "///" (3 garis miring)
- * - 1 Phase: "/" (1 garis miring)
+ * Memformat simbol garis fasa sesuai standar Keterangan Gambar PLN:
+ * - JTR 1 Fasa Only / UB: "///" (3 garis miring)
+ * - JTR 3 Fasa Only / UB: "////" (4 garis miring)
+ * - JTM / MVTIC / Vang Net: "" (tanpa garis miring, dibedakan dari jenis garis solid / putus-putus / titik-garis)
  */
-export function getPhaseSlashSymbol(phaseCount: CablePhaseCount): string {
-  return phaseCount === 1 ? '/' : '///';
+export function getPhaseSlashSymbol(
+  phaseCount: CablePhaseCount,
+  jenisJaringan?: NetworkCategory,
+  conductorType?: SurveySpanConductorType
+): string {
+  if (
+    jenisJaringan === 'JTM' ||
+    conductorType === 'VANG_NET' ||
+    (conductorType && conductorType.toUpperCase().includes('MVTIC'))
+  ) {
+    return '';
+  }
+  const effectivePhase = conductorType
+    ? inferPhaseCountFromConductor(conductorType, phaseCount)
+    : phaseCount;
+  return effectivePhase === 1 ? '///' : '////';
 }
 
 /**
  * Menentukan rasio posisi longitudinal (0..1 sepanjang bentangan gawang)
- * untuk tanda garis fasa (/ atau ///) agar TIDAK PERNAH saling menumpuk
+ * untuk tanda garis fasa (/// atau ////) agar TIDAK PERNAH saling menumpuk
  * ketika terdapat >1 jenis kabel paralel pada gawang yang sama.
  */
 export function getStaggeredPhaseTickRatio(
@@ -82,15 +103,15 @@ export function getStaggeredPhaseTickRatio(
     return 0.28;
   }
   if (totalCables === 2) {
-    return cableIndex === 0 ? 0.24 : 0.76;
+    return cableIndex === 0 ? 0.28 : 0.72;
   }
-  const staggeredSlots = [0.2, 0.78, 0.33, 0.66, 0.14, 0.84];
+  const staggeredSlots = [0.22, 0.76, 0.36, 0.64, 0.16, 0.84];
   return staggeredSlots[cableIndex % staggeredSlots.length];
 }
 
 /**
  * Menghitung sudut kemiringan layar (derajat) dari titik awal ke titik akhir kabel
- * agar simbol garis fasa (/ atau ///) tegak lurus/miring mengikuti arah bentangan kabel di peta.
+ * agar simbol garis fasa (/// atau ////) tegak lurus/miring mengikuti arah bentangan kabel di peta.
  */
 export function getCableScreenAngleDeg(
   lat1: number,
@@ -109,25 +130,40 @@ export function getCableScreenAngleDeg(
 }
 
 /**
- * Membangun SVG tanda garis fasa (/ untuk 1 Phase, /// untuk 3 Phase)
- * yang memotong garis kabel JTM maupun JTR sesuai Contoh File Gambar Survey.pdf
+ * Membangun SVG tanda garis fasa sesuai standar Keterangan Gambar PLN:
+ * - JTR 1 Fasa Only / UB: 3 garis miring (///)
+ * - JTR 3 Fasa Only / UB: 4 garis miring (////)
+ * - JTM / MVTIC / Vang Net: tidak menggunakan slash (dibedakan lewat corak garis)
  */
 export function buildPhaseSlashSvg(
   phaseCount: CablePhaseCount,
   strokeColor: string,
-  angleDeg: number = 0
+  angleDeg: number = 0,
+  jenisJaringan?: NetworkCategory,
+  conductorType?: SurveySpanConductorType
 ): string {
-  const slashOffsets = phaseCount === 1 ? [0] : [-5, 0, 5];
+  if (
+    jenisJaringan === 'JTM' ||
+    conductorType === 'VANG_NET' ||
+    (conductorType && conductorType.toUpperCase().includes('MVTIC'))
+  ) {
+    return '';
+  }
+  const effectivePhase = conductorType
+    ? inferPhaseCountFromConductor(conductorType, phaseCount)
+    : phaseCount;
+  const slashOffsets =
+    effectivePhase === 1 ? [-3.8, 0, 3.8] : [-5.7, -1.9, 1.9, 5.7];
   const linesHtml = slashOffsets
     .map(
       (ox) => `
-      <line x1="${ox - 3}" y1="7" x2="${ox + 3}" y2="-7" stroke="#ffffff" stroke-width="4" stroke-linecap="round" />
-      <line x1="${ox - 3}" y1="7" x2="${ox + 3}" y2="-7" stroke="${strokeColor}" stroke-width="2.2" stroke-linecap="round" />
+      <line x1="${ox - 2.1}" y1="4.8" x2="${ox + 2.1}" y2="-4.8" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" />
+      <line x1="${ox - 2.1}" y1="4.8" x2="${ox + 2.1}" y2="-4.8" stroke="${strokeColor}" stroke-width="1.4" stroke-linecap="round" />
     `
     )
     .join('');
 
-  return `<svg width="28" height="24" viewBox="-14 -12 28 24" style="overflow:visible; transform: rotate(${angleDeg}deg); pointer-events: none;">
+  return `<svg width="26" height="16" viewBox="-13 -8 26 16" style="overflow:visible; transform: rotate(${angleDeg}deg); pointer-events: none;">
     ${linesHtml}
   </svg>`;
 }
@@ -189,66 +225,465 @@ export interface CableVisualStyle {
   badgeText: string;
   weight: number;
   dashArray?: string;
+  slashCount: 0 | 3 | 4;
   shortCategoryLabel: string;
 }
 
 /**
- * Membedakan warna & corak garis kabel secara tegas antara JTM (20kV), JTR (380/220V), dan SR (Sambungan Rumah)
- * agar tidak semuanya berwarna merah.
+ * Menentukan warna & corak garis kabel sesuai Tabel Keterangan Gambar PLN:
+ * - Baru (RENCANA) = Merah (#dc2626), Eksisting = Hitam (#0f172a), kecuali Vang Net = Biru (#0284c7)
+ * - No 3. JTM 3 Fasa: Garis utuh (solid) tanpa slash
+ * - No 4. JTM 1 Fasa: Garis putus-putus (dashed: '8, 5') tanpa slash
+ * - No 5. JTR 1 Fasa Only / UB: Garis utuh dengan 3 garis miring (///)
+ * - No 6. JTR 3 Fasa Only / UB: Garis utuh dengan 4 garis miring (////)
+ * - No 11. Vang Net: Garis utuh warna Biru (#0284c7) baik Baru maupun Eksisting
+ * - No 13. MVTIC: Garis strip-titik-titik (dash-dot-dot: '10, 4, 2, 4, 2, 4') tanpa slash
  */
 export function getCableVisualStyle(
   jenisJaringan: NetworkCategory,
-  statusJaringan: 'RENCANA' | 'EKSISTING'
+  statusJaringan: 'RENCANA' | 'EKSISTING',
+  conductorType?: SurveySpanConductorType,
+  phaseCount?: CablePhaseCount
 ): CableVisualStyle {
   const isRencana = statusJaringan === 'RENCANA';
+  const baseColor = isRencana ? '#dc2626' : '#0f172a';
+  const badgeBg = isRencana ? '#dc2626' : '#0f172a';
+  const badgeBorder = isRencana ? '#fecaca' : '#cbd5e1';
+  const effectivePhase = conductorType
+    ? inferPhaseCountFromConductor(conductorType, phaseCount)
+    : phaseCount || 3;
 
-  if (jenisJaringan === 'JTM') {
-    // JTM 20kV: Merah tegas (Rencana) vs Merah Maroon Tua (Eksisting)
+  // No 11: Vang Net -> Biru (#0284c7) untuk Baru & Eksisting
+  if (conductorType === 'VANG_NET') {
     return {
       jenisJaringan: 'JTM',
       statusJaringan,
-      strokeColor: isRencana ? '#dc2626' : '#7f1d1d',
-      badgeBg: isRencana ? '#dc2626' : '#450a0a',
-      badgeBorder: isRencana ? '#fecaca' : '#f87171',
+      strokeColor: '#0284c7',
+      badgeBg: '#0284c7',
+      badgeBorder: '#bae6fd',
       badgeText: '#ffffff',
-      weight: isRencana ? 4.5 : 3.5,
-      dashArray: isRencana ? undefined : '10, 4',
-      shortCategoryLabel: 'JTM 20kV',
+      weight: 2.1,
+      dashArray: undefined,
+      slashCount: 0,
+      shortCategoryLabel: 'Vang Net',
     };
   }
 
-  if (jenisJaringan === 'SR') {
-    // SR (Sambungan Rumah): Oranye/Amber Putus-putus (Rencana) vs Ungu Tua Putus-putus (Eksisting)
+  // No 13: MVTIC -> Strip-titik-titik (- . . - . . -)
+  if (conductorType && conductorType.toUpperCase().includes('MVTIC')) {
     return {
-      jenisJaringan: 'SR',
+      jenisJaringan: 'JTM',
       statusJaringan,
-      strokeColor: isRencana ? '#d97706' : '#6b21a8',
-      badgeBg: isRencana ? '#d97706' : '#581c87',
-      badgeBorder: isRencana ? '#fde68a' : '#d8b4fe',
+      strokeColor: baseColor,
+      badgeBg,
+      badgeBorder,
       badgeText: '#ffffff',
-      weight: isRencana ? 3.5 : 2.8,
-      dashArray: '5, 5',
-      shortCategoryLabel: 'SR Pelanggan',
+      weight: isRencana ? 2.3 : 2.0,
+      dashArray: '10, 4, 2, 4, 2, 4',
+      slashCount: 0,
+      shortCategoryLabel: 'MVTIC',
     };
   }
 
-  // JTR (LVTC 380/220V): Biru Elektrik / Cyan Tegas (Rencana) vs Biru Navy Gelap (Eksisting)
+  // No 3 & No 4: JTM 3 Fasa (Solid) vs JTM 1 Fasa (Dashed)
+  if (jenisJaringan === 'JTM') {
+    const isOnePhase = effectivePhase === 1;
+    return {
+      jenisJaringan: 'JTM',
+      statusJaringan,
+      strokeColor: baseColor,
+      badgeBg,
+      badgeBorder,
+      badgeText: '#ffffff',
+      weight: isRencana ? 2.3 : 2.0,
+      dashArray: isOnePhase ? '8, 5' : undefined,
+      slashCount: 0,
+      shortCategoryLabel: isOnePhase ? 'JTM 1 Fasa' : 'JTM 3 Fasa',
+    };
+  }
+
+  // No 5 & No 6: JTR / SR 1 Fasa (3 slash ///) vs 3 Fasa (4 slash ////)
+  const isOnePhaseJtr = effectivePhase === 1;
   return {
-    jenisJaringan: 'JTR',
+    jenisJaringan,
     statusJaringan,
-    strokeColor: isRencana ? '#0284c7' : '#1e3a8a',
-    badgeBg: isRencana ? '#0284c7' : '#172554',
-    badgeBorder: isRencana ? '#bae6fd' : '#93c5fd',
+    strokeColor: baseColor,
+    badgeBg,
+    badgeBorder,
     badgeText: '#ffffff',
-    weight: isRencana ? 4 : 3.2,
-    dashArray: isRencana ? undefined : '8, 4',
-    shortCategoryLabel: 'JTR LVTC',
+    weight: isRencana ? 2.1 : 1.8,
+    dashArray: undefined,
+    slashCount: isOnePhaseJtr ? 3 : 4,
+    shortCategoryLabel:
+      jenisJaringan === 'SR'
+        ? isOnePhaseJtr
+          ? 'SR 1 Fasa'
+          : 'SR 3 Fasa'
+        : isOnePhaseJtr
+        ? 'JTR 1 Fasa'
+        : 'JTR 3 Fasa',
+  };
+}
+
+export interface ResolvedNodeDrawingSymbol {
+  isPlanned: boolean;
+  color: string;
+  poleMaterial: 'BETON' | 'BESI';
+  isGardu: boolean;
+  trafoPhase: 1 | 3;
+  hasFco: boolean;
+  hasAbsw: boolean;
+  hasSchoor: boolean;
+  schoorAngleDeg: number;
+  schoorAngleDegList: number[];
+}
+
+/**
+ * Menentukan simbol standar PLN pada titik Tiang / Gardu sesuai Keterangan Gambar PLN:
+ * 1. Tiang Beton: Lingkaran dengan silang di dalam (⊗) — Merah (Baru) / Hitam (Eksisting)
+ * 2. Tiang Besi: Lingkaran penuh blok warna (●) — Merah (Baru) / Hitam (Eksisting)
+ * 7. Trafo 1 Fasa: 1 Segitiga penuh (▲) — Merah (Baru) / Hitam (Eksisting)
+ * 8. Trafo 3 Fasa: 3 Segitiga berjajar (▲▲▲) — Merah (Baru) / Hitam (Eksisting)
+ * 9. Fuse Cut Out (FCO): Huruf S dicoret garis miring (S/) — Merah (Baru) / Hitam (Eksisting)
+ * 10. ABSW: Simbol saklar ──| |── — Merah (Baru) / Hitam (Eksisting)
+ * 12. Schoor (Skur): Panah miring (↗) — Merah (Baru) / Hitam (Eksisting) dengan arah tarikan yang dapat diputar.
+ *     Catatan Penting: Simbol Schoor/Skur HANYA muncul ketika dipilih konstruksi Skur (SE1-2, CE1-3, CE2-3, CE6-1, dll.).
+ *     Memilih Anchor (F1-2, F1-3, FDG) TIDAK menambah simbol panah karena Anchor adalah pondasi/besi pancangnya.
+ */
+export function resolveNodeDrawingSymbol(
+  node: SurveyPoleNode
+): ResolvedNodeDrawingSymbol {
+  const isPlanned =
+    node.kind === 'TIANG_RENCANA' ||
+    node.kind === 'GARDU_RENCANA' ||
+    node.kind === 'TITIK_APP';
+  const color = isPlanned ? '#dc2626' : '#0f172a';
+  const codes = (node.constructions || []).map((c) => c.code.toUpperCase());
+
+  const poleMaterial: 'BETON' | 'BESI' =
+    node.poleMaterial ||
+    (codes.some((c) => c.includes('BESI')) ? 'BESI' : 'BETON');
+
+  const isGardu =
+    node.kind === 'GARDU_TRAFO' ||
+    node.kind === 'GARDU_RENCANA' ||
+    codes.some(
+      (c) =>
+        c.startsWith('CG-') ||
+        c.startsWith('CM5-') ||
+        c.startsWith('CK-') ||
+        c.startsWith('CT-') ||
+        c.includes('TRAFO') ||
+        c.includes('GARDU')
+    );
+
+  const trafoPhase: 1 | 3 =
+    node.trafoPhase ||
+    (codes.some((c) => c.includes('1P') || c.includes('25KVA')) ? 1 : 3);
+
+  const hasFco =
+    node.hasFco !== undefined
+      ? node.hasFco
+      : codes.some((c) => c.startsWith('CF') || c.includes('FCO'));
+
+  const hasAbsw =
+    node.hasAbsw !== undefined
+      ? node.hasAbsw
+      : codes.some(
+          (c) => c.includes('ABSW') || c.startsWith('CA-') || c.includes('LBS')
+        );
+
+  // Hitung jumlah konstruksi SKUR (SE1-2, CE1-3, CE2-3, CE6-1, dll.) pada titik ini.
+  // Konstruksi ANCHOR (F1-2, F1-3, FDG) adalah pondasi angkur dan TIDAK dihitung sebagai panah skur.
+  const schoorQtyCount = (node.constructions || []).reduce((acc, c) => {
+    const code = c.code.toUpperCase();
+    if (
+      code.startsWith('F1') ||
+      code === 'FDG' ||
+      code.includes('ANCHOR')
+    ) {
+      return acc;
+    }
+    const isSkur =
+      code.startsWith('SE') ||
+      code.startsWith('CE1') ||
+      code.startsWith('CE2') ||
+      code.startsWith('CE6') ||
+      code.startsWith('E1') ||
+      code.startsWith('E2') ||
+      code.startsWith('E6') ||
+      code.includes('SKUR') ||
+      code.includes('SCHOOR');
+    return isSkur ? acc + (c.qty || 1) : acc;
+  }, 0);
+
+  const hasExplicitConstructions = (node.constructions || []).length > 0;
+  const targetSkurCount =
+    schoorQtyCount > 0
+      ? schoorQtyCount
+      : !hasExplicitConstructions && node.hasSchoor
+      ? 1
+      : 0;
+
+  const hasSchoor = targetSkurCount > 0;
+
+  const baseAngle =
+    typeof node.schoorAngleDeg === 'number' && !Number.isNaN(node.schoorAngleDeg)
+      ? node.schoorAngleDeg
+      : -35;
+
+  // Bangun array sudut arah tarikan tepat sejumlah set Skur (targetSkurCount)
+  const schoorAngleDegList: number[] = [];
+  const savedAngles = Array.isArray(node.schoorAngleDegList)
+    ? node.schoorAngleDegList
+    : [];
+  for (let i = 0; i < targetSkurCount; i++) {
+    if (typeof savedAngles[i] === 'number' && !Number.isNaN(savedAngles[i])) {
+      schoorAngleDegList.push(savedAngles[i]);
+    } else if (i === 0) {
+      schoorAngleDegList.push(baseAngle);
+    } else {
+      // Sudut kedua berjarak 90 derajat secara default
+      const firstAngle = schoorAngleDegList[0] ?? baseAngle;
+      const nextAngle = (firstAngle + i * 90) % 360;
+      schoorAngleDegList.push(nextAngle > 180 ? nextAngle - 360 : nextAngle);
+    }
+  }
+
+  return {
+    isPlanned,
+    color,
+    poleMaterial,
+    isGardu,
+    trafoPhase,
+    hasFco,
+    hasAbsw,
+    hasSchoor,
+    schoorAngleDeg: schoorAngleDegList[0] ?? baseAngle,
+    schoorAngleDegList,
   };
 }
 
 /**
+ * Membangun SVG simbol titik tiang / trafo / FCO / ABSW / Schoor untuk marker Peta GIS
+ * sesuai tabel Keterangan Gambar PLN.
+ * Catatan: Untuk titik Trafo (isGardu), tidak ditampilkan simbol tiang dan FCO otomatis
+ * karena trafo dapat disisipkan pada tiang eksisting.
+ */
+export function buildNodeMarkerSvg(
+  node: SurveyPoleNode,
+  isSelected: boolean = false
+): string {
+  const sym = resolveNodeDrawingSymbol(node);
+  const {
+    color,
+    poleMaterial,
+    isGardu,
+    trafoPhase,
+    hasFco,
+    hasAbsw,
+    hasSchoor,
+    schoorAngleDegList,
+  } = sym;
+  const selRing = isSelected
+    ? `<circle cx="0" cy="0" r="13" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="3,2" />`
+    : '';
+
+  // Simbol Tiang: Hanya ditampilkan jika BUKAN titik Trafo murni (isGardu = false)
+  const poleSvg = isGardu
+    ? ''
+    : poleMaterial === 'BESI'
+    ? `<circle cx="0" cy="0" r="7.5" fill="${color}" stroke="#0f172a" stroke-width="1.4" />`
+    : `<circle cx="0" cy="0" r="7.5" fill="#ffffff" stroke="${color}" stroke-width="2" />
+         <line x1="-5" y1="-5" x2="5" y2="5" stroke="${color}" stroke-width="1.8" />
+         <line x1="-5" y1="5" x2="5" y2="-5" stroke="${color}" stroke-width="1.8" />`;
+
+  // Simbol Trafo: 1 Fasa (▲ 1 segitiga) vs 3 Fasa (▲▲▲ 3 segitiga berjajar) tepat di pusat titik
+  const trafoSvg = isGardu
+    ? trafoPhase === 1
+      ? `<polygon points="0,-9 -8.5,6.5 8.5,6.5" fill="${color}" stroke="#0f172a" stroke-width="1.2" />`
+      : `<polygon points="-9,-8 -15,6 -3,6" fill="${color}" stroke="#0f172a" stroke-width="1" />
+         <polygon points="0,-8 -6,6 6,6" fill="${color}" stroke="#0f172a" stroke-width="1" />
+         <polygon points="9,-8 3,6 15,6" fill="${color}" stroke="#0f172a" stroke-width="1" />`
+    : '';
+
+  // Simbol Fuse Cut Out (FCO): S dengan garis miring / (Hanya jika diaktifkan eksplisit)
+  const fcoSvg = hasFco
+    ? `<g transform="translate(-17, -14)">
+         <text x="0" y="4" text-anchor="middle" font-size="10" font-weight="900" font-family="Arial, sans-serif" fill="${color}">S</text>
+         <line x1="-4" y1="6" x2="4" y2="-6" stroke="${color}" stroke-width="1.6" />
+       </g>`
+    : '';
+
+  // Simbol ABSW: ──| |──
+  const abswSvg = hasAbsw
+    ? `<g transform="translate(0, 15)">
+         <line x1="-11" y1="0" x2="-2.5" y2="0" stroke="${color}" stroke-width="1.8" />
+         <line x1="-2.5" y1="-4.5" x2="-2.5" y2="4.5" stroke="${color}" stroke-width="1.8" />
+         <line x1="2.5" y1="-4.5" x2="2.5" y2="4.5" stroke="${color}" stroke-width="1.8" />
+         <line x1="2.5" y1="0" x2="11" y2="0" stroke="${color}" stroke-width="1.8" />
+       </g>`
+    : '';
+
+  // Simbol Schoor (Skur): Panah sesuai arah tarikan untuk setiap set skur
+  const schoorSvg = hasSchoor
+    ? schoorAngleDegList
+        .map(
+          (angle) => `<g transform="rotate(${angle})">
+         <line x1="7.5" y1="0" x2="22" y2="0" stroke="${color}" stroke-width="2" />
+         <polygon points="25,0 18,-3.8 18,3.8" fill="${color}" />
+       </g>`
+        )
+        .join('')
+    : '';
+
+  return `<svg width="60" height="60" viewBox="-30 -30 60 60" style="overflow:visible; pointer-events:none;">
+    ${selRing}
+    ${schoorSvg}
+    ${trafoSvg}
+    ${fcoSvg}
+    ${abswSvg}
+    ${poleSvg}
+  </svg>`;
+}
+
+export interface ActiveLegendRow {
+  key:
+    | 'TIANG_BETON'
+    | 'TIANG_BESI'
+    | 'JTM_3P'
+    | 'JTM_1P'
+    | 'JTR_1P'
+    | 'JTR_3P'
+    | 'TRAFO_1P'
+    | 'TRAFO_3P'
+    | 'FCO'
+    | 'ABSW'
+    | 'VANG_NET'
+    | 'SCHOOR'
+    | 'MVTIC';
+  no: number;
+  label: string;
+  hasBaru: boolean;
+  hasEksisting: boolean;
+}
+
+/**
+ * Menghasilkan daftar baris Keterangan Gambar secara dinamis berdasarkan elemen yang benar-benar ada di kanvas.
+ * Jika suatu jenis tiang/kabel/aksesoris tidak ada di kanvas, maka baris/simbol tersebut tidak ditampilkan.
+ */
+export function getActiveLegendItems(
+  nodes: SurveyPoleNode[],
+  spans: SurveySpanEdge[]
+): ActiveLegendRow[] {
+  const flags: Record<
+    ActiveLegendRow['key'],
+    { label: string; hasBaru: boolean; hasEksisting: boolean }
+  > = {
+    TIANG_BETON: { label: 'Tiang Beton', hasBaru: false, hasEksisting: false },
+    TIANG_BESI: { label: 'Tiang Besi', hasBaru: false, hasEksisting: false },
+    JTM_3P: { label: 'JTM 3 Fasa', hasBaru: false, hasEksisting: false },
+    JTM_1P: { label: 'JTM 1 Fasa', hasBaru: false, hasEksisting: false },
+    JTR_1P: { label: 'JTR 1 Fasa Only / UB', hasBaru: false, hasEksisting: false },
+    JTR_3P: { label: 'JTR 3 Fasa Only / UB', hasBaru: false, hasEksisting: false },
+    TRAFO_1P: { label: 'Trafo 1 Fasa', hasBaru: false, hasEksisting: false },
+    TRAFO_3P: { label: 'Trafo 3 Fasa', hasBaru: false, hasEksisting: false },
+    FCO: { label: 'Fuse Cut Out', hasBaru: false, hasEksisting: false },
+    ABSW: { label: 'ABSW', hasBaru: false, hasEksisting: false },
+    VANG_NET: { label: 'Vang Net', hasBaru: false, hasEksisting: false },
+    SCHOOR: { label: 'Schoor', hasBaru: false, hasEksisting: false },
+    MVTIC: { label: 'MVTIC', hasBaru: false, hasEksisting: false },
+  };
+
+  nodes.forEach((node) => {
+    const sym = resolveNodeDrawingSymbol(node);
+    const side = sym.isPlanned ? 'hasBaru' : 'hasEksisting';
+    if (sym.isGardu) {
+      if (sym.trafoPhase === 1) {
+        flags.TRAFO_1P[side] = true;
+      } else {
+        flags.TRAFO_3P[side] = true;
+      }
+    } else {
+      if (sym.poleMaterial === 'BESI') {
+        flags.TIANG_BESI[side] = true;
+      } else {
+        flags.TIANG_BETON[side] = true;
+      }
+    }
+    if (sym.hasFco) flags.FCO[side] = true;
+    if (sym.hasAbsw) flags.ABSW[side] = true;
+    if (sym.hasSchoor) flags.SCHOOR[side] = true;
+  });
+
+  spans.forEach((span) => {
+    const cables = getEffectiveSpanCables(span);
+    cables.forEach((c) => {
+      const side = c.statusJaringan === 'RENCANA' ? 'hasBaru' : 'hasEksisting';
+      const phase = inferPhaseCountFromConductor(c.conductorType, c.phaseCount);
+      if (c.conductorType === 'VANG_NET') {
+        flags.VANG_NET[side] = true;
+      } else if (c.conductorType && c.conductorType.toUpperCase().includes('MVTIC')) {
+        flags.MVTIC[side] = true;
+      } else if (c.jenisJaringan === 'JTM') {
+        if (phase === 1) flags.JTM_1P[side] = true;
+        else flags.JTM_3P[side] = true;
+      } else {
+        if (phase === 1) flags.JTR_1P[side] = true;
+        else flags.JTR_3P[side] = true;
+      }
+    });
+  });
+
+  const orderedKeys: ActiveLegendRow['key'][] = [
+    'TIANG_BETON',
+    'TIANG_BESI',
+    'JTM_3P',
+    'JTM_1P',
+    'JTR_1P',
+    'JTR_3P',
+    'TRAFO_1P',
+    'TRAFO_3P',
+    'FCO',
+    'ABSW',
+    'VANG_NET',
+    'SCHOOR',
+    'MVTIC',
+  ];
+
+  const activeRows: ActiveLegendRow[] = [];
+  orderedKeys.forEach((key) => {
+    const item = flags[key];
+    if (item.hasBaru || item.hasEksisting) {
+      activeRows.push({
+        key,
+        no: activeRows.length + 1,
+        label: item.label,
+        hasBaru: item.hasBaru,
+        hasEksisting: item.hasEksisting,
+      });
+    }
+  });
+
+  return activeRows;
+}
+
+/**
+ * Memformat tanggal YYYY-MM-DD menjadi DD-MM-YYYY sesuai standar persuratan & RAB PLN
+ */
+export function formatDateDdMmYyyy(dateStr?: string): string {
+  const fallback = new Date().toISOString().split('T')[0];
+  const raw = (dateStr && dateStr.trim() ? dateStr.trim() : fallback).split('T')[0];
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    return `${match[3]}-${match[2]}-${match[1]}`;
+  }
+  return raw;
+}
+
+/**
  * Menghitung koordinat garis paralel (offset) apabila dalam 1 gawang terdapat > 1 jenis kabel
- * sehingga kabel JTM, JTR, dan SR terlihat berdampingan dan tidak saling menumpuk.
+ * sehingga kabel JTM, JTR, dan SR terlihat berdampingan secara proporsional dan rapi.
  */
 export function calculateOffsetLineCoords(
   lat1: number,
@@ -257,7 +692,7 @@ export function calculateOffsetLineCoords(
   lng2: number,
   cableIndex: number,
   totalCables: number,
-  offsetStepDegrees: number = 0.000028
+  offsetStepDegrees: number = 0.000010
 ): [[number, number], [number, number]] {
   if (totalCables <= 1) {
     return [
@@ -1117,7 +1552,7 @@ export function generateRabItemsFromSurvey(
 }
 
 /**
- * Mengubah volume set utama pada baris Header Paket Konstruksi (+ | SJ6 | Unit | Vol) di Tabel RAB
+ * Mengubah volume set utama pada baris Header Paket Konstruksi (+ | CC10 | Unit | Vol) di Tabel RAB
  * dan secara otomatis mengalikan seluruh volume detail material di bawahnya berdasarkan unitQtyPerPackage
  * (aman terhadap nilai sementara 0 saat pengguna menekan Backspace sebelum mengetik angka baru).
  */
@@ -1126,10 +1561,12 @@ export function updateRabPackageHeaderVolume(
   headerId: string,
   nextPkgVolRaw: number
 ): RabLineItem[] {
-  const headerItem = items.find((r) => r.id === headerId);
-  if (!headerItem || !headerItem.isPackageHeader) {
+  const normalized = normalizeRabPackageItems(items);
+  const headerIdx = normalized.findIndex((r) => r.id === headerId);
+  if (headerIdx === -1 || !normalized[headerIdx].isPackageHeader) {
     return items;
   }
+  const headerItem = normalized[headerIdx];
 
   const nextPkgVol = Math.max(0, Number(nextPkgVolRaw) || 0);
   const pkgCode = (
@@ -1143,7 +1580,20 @@ export function updateRabPackageHeaderVolume(
   const oldPkgVol =
     Number(headerItem.volume) > 0 ? Number(headerItem.volume) : 1;
 
-  return items.map((row) => {
+  // Tandai indeks baris detail yang berada tepat di bawah header paket ini pada seksi yang sama
+  const contiguousChildIds = new Set<string>();
+  for (let i = headerIdx + 1; i < normalized.length; i++) {
+    const candidate = normalized[i];
+    if (candidate.isPackageHeader || candidate.section !== headerItem.section) {
+      break;
+    }
+    const candidatePkg = (candidate.parentPackageCode || '').trim().toUpperCase();
+    if (!candidatePkg || candidatePkg === pkgCode) {
+      contiguousChildIds.add(candidate.id);
+    }
+  }
+
+  return normalized.map((row) => {
     if (row.id === headerId) {
       return {
         ...row,
@@ -1154,8 +1604,10 @@ export function updateRabPackageHeaderVolume(
     const isChild =
       !row.isPackageHeader &&
       (row.parentHeaderId === headerId ||
+        contiguousChildIds.has(row.id) ||
         (row.parentPackageCode &&
-          row.parentPackageCode.trim().toUpperCase() === pkgCode));
+          row.parentPackageCode.trim().toUpperCase() === pkgCode &&
+          row.section === headerItem.section));
 
     if (isChild) {
       let baseUnitQty = row.unitQtyPerPackage;
@@ -1181,6 +1633,7 @@ export function updateRabPackageHeaderVolume(
         parentPackageCode: row.parentPackageCode || pkgCode,
         unitQtyPerPackage: baseUnitQty,
         volume: nextVol,
+        sourceInfo: `${pkgCode} (${nextPkgVol} Unit)`,
       };
     }
 
