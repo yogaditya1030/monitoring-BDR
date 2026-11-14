@@ -31,6 +31,83 @@ import {
 
 const STORAGE_KEY = 'PLN_PBPD_PFK_RECORDS_V6';
 
+function sanitizeStoredRecord(r: any, idx: number): PermohonanItem {
+  const fallback = INITIAL_PLN_RECORDS[0];
+  const rawStatus =
+    r?.status === 'SURVEI/RAB'
+      ? Number(r?.rab) > 0
+        ? 'RAB'
+        : 'SURVEI'
+      : r?.status || 'MOHON';
+
+  return {
+    ...fallback,
+    ...r,
+    id: typeof r?.id === 'string' && r.id ? r.id : `rec-restored-${idx}`,
+    noNodin: typeof r?.noNodin === 'string' ? r.noNodin : '',
+    status: rawStatus,
+    tahun: Number(r?.tahun) || 2026,
+    projectName:
+      typeof r?.projectName === 'string' && r.projectName.trim()
+        ? r.projectName
+        : 'PELANGGAN PLN',
+    alamat: typeof r?.alamat === 'string' ? r.alamat : '-',
+    peruntukan: typeof r?.peruntukan === 'string' ? r.peruntukan : '-',
+    transaksi:
+      r?.transaksi === 'PB' || r?.transaksi === 'PD' || r?.transaksi === 'PFK'
+        ? r.transaksi
+        : 'PB',
+    dayaLama: Number(r?.dayaLama) || 0,
+    dayaBaru: Number(r?.dayaBaru) || 0,
+    tarif: typeof r?.tarif === 'string' ? r.tarif : 'R-1/TR',
+    meter:
+      r?.meter === 'PRABAYAR' || r?.meter === 'PASKA BAYAR'
+        ? r.meter
+        : 'PASKA BAYAR',
+    kontakPerson: typeof r?.kontakPerson === 'string' ? r.kontakPerson : '-',
+    suratPermohonan:
+      typeof r?.suratPermohonan === 'string' ? r.suratPermohonan : '-',
+    tglSurat: typeof r?.tglSurat === 'string' ? r.tglSurat : '2026-11-01',
+    petugasSurvei:
+      typeof r?.petugasSurvei === 'string' ? r.petugasSurvei : '',
+    tagingLokasi:
+      typeof r?.tagingLokasi === 'string' ? r.tagingLokasi : '-7.6079, 110.2038',
+    nomorGardu: typeof r?.nomorGardu === 'string' ? r.nomorGardu : '',
+    nomorTiang: typeof r?.nomorTiang === 'string' ? r.nomorTiang : '',
+    idPel: typeof r?.idPel === 'string' ? r.idPel : '',
+    idPelTetangga:
+      typeof r?.idPelTetangga === 'string' ? r.idPelTetangga : '',
+    keteranganPekerjaan:
+      typeof r?.keteranganPekerjaan === 'string' ? r.keteranganPekerjaan : '',
+    keteranganStatus:
+      typeof r?.keteranganStatus === 'string'
+        ? r.keteranganStatus.replace(/Jalur\s+(Kilat|Cepat)\s*/gi, 'Permohonan ')
+        : '',
+    keteranganKendala:
+      typeof r?.keteranganKendala === 'string' ? r.keteranganKendala : '',
+    tglSurvei: typeof r?.tglSurvei === 'string' ? r.tglSurvei : '',
+    rab: Number(r?.rab) || 0,
+    noPkVendor: typeof r?.noPkVendor === 'string' ? r.noPkVendor : '',
+    workingPermit:
+      typeof r?.workingPermit === 'string' ? r.workingPermit : 'BELUM',
+    validasiSegel:
+      typeof r?.validasiSegel === 'string' ? r.validasiSegel : 'BELUM',
+    historyLogs: Array.isArray(r?.historyLogs)
+      ? r.historyLogs.map((log: any) => ({
+          ...log,
+          action:
+            typeof log?.action === 'string'
+              ? log.action.replace(/Jalur\s+(Kilat|Cepat)\s*/gi, '')
+              : '',
+          notes:
+            typeof log?.notes === 'string'
+              ? log.notes.replace(/Jalur\s+(Kilat|Cepat)\s*/gi, '')
+              : '',
+        }))
+      : [],
+  };
+}
+
 export default function App() {
   const [records, setRecords] = useState<PermohonanItem[]>(() => {
     try {
@@ -38,26 +115,9 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((r: any) => ({
-            ...r,
-            status:
-              r.status === 'SURVEI/RAB'
-                ? r.rab && r.rab > 0
-                  ? 'RAB'
-                  : 'SURVEI'
-                : r.status,
-            keteranganStatus:
-              typeof r.keteranganStatus === 'string'
-                ? r.keteranganStatus.replace(/Jalur\s+(Kilat|Cepat)\s*/gi, 'Permohonan ')
-                : r.keteranganStatus,
-            historyLogs: Array.isArray(r.historyLogs)
-              ? r.historyLogs.map((log: any) => ({
-                  ...log,
-                  action: typeof log.action === 'string' ? log.action.replace(/Jalur\s+(Kilat|Cepat)\s*/gi, '') : log.action,
-                  notes: typeof log.notes === 'string' ? log.notes.replace(/Jalur\s+(Kilat|Cepat)\s*/gi, '') : log.notes,
-                }))
-              : [],
-          }));
+          return parsed
+            .filter((item) => item && typeof item === 'object')
+            .map((r: any, idx: number) => sanitizeStoredRecord(r, idx));
         }
       }
     } catch (e) {
@@ -108,12 +168,31 @@ export default function App() {
     }, 4500);
   };
 
-  // Sync with localStorage
+  // Sync with localStorage (with automatic fallback if large PDF/image attachments exceed browser 5MB quota)
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
-    } catch (e) {
-      console.error('Failed to save to localStorage', e);
+    } catch {
+      try {
+        const compactRecords = records.map((r) => ({
+          ...r,
+          suratPermohonanDataUrl:
+            r.suratPermohonanDataUrl &&
+            r.suratPermohonanDataUrl.length > 150000
+              ? undefined
+              : r.suratPermohonanDataUrl,
+          suratPermohonanPages: Array.isArray(r.suratPermohonanPages)
+            ? r.suratPermohonanPages.map((p, i) =>
+                typeof p === 'string' && p.length > 150000
+                  ? `FORMAL_PAGE_${i + 1}`
+                  : p
+              )
+            : undefined,
+        }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(compactRecords));
+      } catch {
+        // Ignore storage write errors when browser storage is full
+      }
     }
   }, [records]);
 
