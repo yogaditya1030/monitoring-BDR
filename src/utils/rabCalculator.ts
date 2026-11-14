@@ -163,8 +163,10 @@ export function buildPhaseSlashSvg(
     )
     .join('');
 
-  return `<svg width="26" height="16" viewBox="-13 -8 26 16" style="overflow:visible; transform: rotate(${angleDeg}deg); pointer-events: none;">
-    ${linesHtml}
+  return `<svg width="26" height="16" viewBox="-13 -8 26 16" style="overflow:visible; pointer-events: none;">
+    <g transform="rotate(${angleDeg})">
+      ${linesHtml}
+    </g>
   </svg>`;
 }
 
@@ -230,8 +232,12 @@ export interface CableVisualStyle {
 }
 
 /**
- * Menentukan warna & corak garis kabel sesuai Tabel Keterangan Gambar PLN:
+ * Menentukan warna, ketebalan (JTM > JTR > SR), & corak garis kabel sesuai Tabel Keterangan Gambar PLN:
  * - Baru (RENCANA) = Merah (#dc2626), Eksisting = Hitam (#0f172a), kecuali Vang Net = Biru (#0284c7)
+ * - Ukuran ketebalan dibedakan:
+ *   • JTM (20 kV / MVTIC): Paling tebal (3.2px Baru / 2.8px Eksisting)
+ *   • JTR (380/220V LVTC): Sedang (2.1px Baru / 1.85px Eksisting)
+ *   • SR (Sambungan Rumah): Paling tipis (1.25px Baru / 1.1px Eksisting)
  * - No 3. JTM 3 Fasa: Garis utuh (solid) tanpa slash
  * - No 4. JTM 1 Fasa: Garis putus-putus (dashed: '8, 5') tanpa slash
  * - No 5. JTR 1 Fasa Only / UB: Garis utuh dengan 3 garis miring (///)
@@ -262,7 +268,7 @@ export function getCableVisualStyle(
       badgeBg: '#0284c7',
       badgeBorder: '#bae6fd',
       badgeText: '#ffffff',
-      weight: 2.1,
+      weight: 1.75,
       dashArray: undefined,
       slashCount: 0,
       shortCategoryLabel: 'Vang Net',
@@ -278,14 +284,14 @@ export function getCableVisualStyle(
       badgeBg,
       badgeBorder,
       badgeText: '#ffffff',
-      weight: isRencana ? 2.3 : 2.0,
+      weight: isRencana ? 3.2 : 2.8,
       dashArray: '10, 4, 2, 4, 2, 4',
       slashCount: 0,
       shortCategoryLabel: 'MVTIC',
     };
   }
 
-  // No 3 & No 4: JTM 3 Fasa (Solid) vs JTM 1 Fasa (Dashed)
+  // No 3 & No 4: JTM 3 Fasa (Solid) vs JTM 1 Fasa (Dashed) — Ukuran Paling Tebal
   if (jenisJaringan === 'JTM') {
     const isOnePhase = effectivePhase === 1;
     return {
@@ -295,33 +301,36 @@ export function getCableVisualStyle(
       badgeBg,
       badgeBorder,
       badgeText: '#ffffff',
-      weight: isRencana ? 2.3 : 2.0,
+      weight: isRencana ? 3.2 : 2.8,
       dashArray: isOnePhase ? '8, 5' : undefined,
       slashCount: 0,
       shortCategoryLabel: isOnePhase ? 'JTM 1 Fasa' : 'JTM 3 Fasa',
     };
   }
 
-  // No 5 & No 6: JTR / SR 1 Fasa (3 slash ///) vs 3 Fasa (4 slash ////)
+  // No 5 & No 6: JTR (Ukuran Sedang) vs SR (Ukuran Paling Tipis)
   const isOnePhaseJtr = effectivePhase === 1;
+  const isSr =
+    jenisJaringan === 'SR' ||
+    (conductorType &&
+      inferNetworkCategoryFromConductor(conductorType) === 'SR');
   return {
-    jenisJaringan,
+    jenisJaringan: isSr ? 'SR' : 'JTR',
     statusJaringan,
     strokeColor: baseColor,
     badgeBg,
     badgeBorder,
     badgeText: '#ffffff',
-    weight: isRencana ? 2.1 : 1.8,
+    weight: isSr ? (isRencana ? 1.25 : 1.1) : isRencana ? 2.1 : 1.85,
     dashArray: undefined,
     slashCount: isOnePhaseJtr ? 3 : 4,
-    shortCategoryLabel:
-      jenisJaringan === 'SR'
-        ? isOnePhaseJtr
-          ? 'SR 1 Fasa'
-          : 'SR 3 Fasa'
-        : isOnePhaseJtr
-        ? 'JTR 1 Fasa'
-        : 'JTR 3 Fasa',
+    shortCategoryLabel: isSr
+      ? isOnePhaseJtr
+        ? 'SR 1 Fasa'
+        : 'SR 3 Fasa'
+      : isOnePhaseJtr
+      ? 'JTR 1 Fasa'
+      : 'JTR 3 Fasa',
   };
 }
 
@@ -467,8 +476,8 @@ export function resolveNodeDrawingSymbol(
 /**
  * Membangun SVG simbol titik tiang / trafo / FCO / ABSW / Schoor untuk marker Peta GIS
  * sesuai tabel Keterangan Gambar PLN.
- * Catatan: Untuk titik Trafo (isGardu), tidak ditampilkan simbol tiang dan FCO otomatis
- * karena trafo dapat disisipkan pada tiang eksisting.
+ * Setiap panah Schoor (Skur) memiliki grup `.pln-schoor-arrow-grip` dengan `data-schoor-idx`
+ * agar pengguna dapat menekan langsung panah skur dan memutarnya tanpa menggeser tiang.
  */
 export function buildNodeMarkerSvg(
   node: SurveyPoleNode,
@@ -486,30 +495,34 @@ export function buildNodeMarkerSvg(
     schoorAngleDegList,
   } = sym;
   const selRing = isSelected
-    ? `<circle cx="0" cy="0" r="13" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="3,2" />`
+    ? `<circle cx="0" cy="0" r="11.5" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="3,2" style="pointer-events:none;" />`
     : '';
 
   // Simbol Tiang: Hanya ditampilkan jika BUKAN titik Trafo murni (isGardu = false)
   const poleSvg = isGardu
     ? ''
     : poleMaterial === 'BESI'
-    ? `<circle cx="0" cy="0" r="7.5" fill="${color}" stroke="#0f172a" stroke-width="1.4" />`
-    : `<circle cx="0" cy="0" r="7.5" fill="#ffffff" stroke="${color}" stroke-width="2" />
+    ? `<circle cx="0" cy="0" r="7.5" fill="${color}" stroke="#0f172a" stroke-width="1.4" style="pointer-events:all;cursor:pointer;" />`
+    : `<g style="pointer-events:all;cursor:pointer;">
+         <circle cx="0" cy="0" r="7.5" fill="#ffffff" stroke="${color}" stroke-width="2" />
          <line x1="-5" y1="-5" x2="5" y2="5" stroke="${color}" stroke-width="1.8" />
-         <line x1="-5" y1="5" x2="5" y2="-5" stroke="${color}" stroke-width="1.8" />`;
+         <line x1="-5" y1="5" x2="5" y2="-5" stroke="${color}" stroke-width="1.8" />
+       </g>`;
 
   // Simbol Trafo: 1 Fasa (▲ 1 segitiga) vs 3 Fasa (▲▲▲ 3 segitiga berjajar) tepat di pusat titik
   const trafoSvg = isGardu
     ? trafoPhase === 1
-      ? `<polygon points="0,-9 -8.5,6.5 8.5,6.5" fill="${color}" stroke="#0f172a" stroke-width="1.2" />`
-      : `<polygon points="-9,-8 -15,6 -3,6" fill="${color}" stroke="#0f172a" stroke-width="1" />
-         <polygon points="0,-8 -6,6 6,6" fill="${color}" stroke="#0f172a" stroke-width="1" />
-         <polygon points="9,-8 3,6 15,6" fill="${color}" stroke="#0f172a" stroke-width="1" />`
+      ? `<polygon points="0,-9 -8.5,6.5 8.5,6.5" fill="${color}" stroke="#0f172a" stroke-width="1.2" style="pointer-events:all;cursor:pointer;" />`
+      : `<g style="pointer-events:all;cursor:pointer;">
+           <polygon points="-9,-8 -15,6 -3,6" fill="${color}" stroke="#0f172a" stroke-width="1" />
+           <polygon points="0,-8 -6,6 6,6" fill="${color}" stroke="#0f172a" stroke-width="1" />
+           <polygon points="9,-8 3,6 15,6" fill="${color}" stroke="#0f172a" stroke-width="1" />
+         </g>`
     : '';
 
   // Simbol Fuse Cut Out (FCO): S dengan garis miring / (Hanya jika diaktifkan eksplisit)
   const fcoSvg = hasFco
-    ? `<g transform="translate(-17, -14)">
+    ? `<g transform="translate(-17, -14)" style="pointer-events:none;">
          <text x="0" y="4" text-anchor="middle" font-size="10" font-weight="900" font-family="Arial, sans-serif" fill="${color}">S</text>
          <line x1="-4" y1="6" x2="4" y2="-6" stroke="${color}" stroke-width="1.6" />
        </g>`
@@ -517,7 +530,7 @@ export function buildNodeMarkerSvg(
 
   // Simbol ABSW: ──| |──
   const abswSvg = hasAbsw
-    ? `<g transform="translate(0, 15)">
+    ? `<g transform="translate(0, 15)" style="pointer-events:none;">
          <line x1="-11" y1="0" x2="-2.5" y2="0" stroke="${color}" stroke-width="1.8" />
          <line x1="-2.5" y1="-4.5" x2="-2.5" y2="4.5" stroke="${color}" stroke-width="1.8" />
          <line x1="2.5" y1="-4.5" x2="2.5" y2="4.5" stroke="${color}" stroke-width="1.8" />
@@ -525,11 +538,14 @@ export function buildNodeMarkerSvg(
        </g>`
     : '';
 
-  // Simbol Schoor (Skur): Panah sesuai arah tarikan untuk setiap set skur
+  // Simbol Schoor (Skur): Panah sesuai arah tarikan untuk setiap set skur (dengan hit-area lebar untuk diputar langsung)
   const schoorSvg = hasSchoor
     ? schoorAngleDegList
         .map(
-          (angle) => `<g transform="rotate(${angle})">
+          (angle, sIdx) => `<g class="pln-schoor-arrow-grip" data-schoor-idx="${sIdx}" transform="rotate(${angle})" style="pointer-events:all; cursor:grab;">
+         <title>Tekan &amp; geser panah ini untuk memutar arah Skur #${sIdx + 1} (${angle}°)</title>
+         <line x1="9" y1="0" x2="27" y2="0" stroke="transparent" stroke-width="14" stroke-linecap="round" />
+         <circle cx="22" cy="0" r="8" fill="transparent" />
          <line x1="7.5" y1="0" x2="22" y2="0" stroke="${color}" stroke-width="2" />
          <polygon points="25,0 18,-3.8 18,3.8" fill="${color}" />
        </g>`
@@ -539,11 +555,32 @@ export function buildNodeMarkerSvg(
 
   return `<svg width="60" height="60" viewBox="-30 -30 60 60" style="overflow:visible; pointer-events:none;">
     ${selRing}
-    ${schoorSvg}
     ${trafoSvg}
     ${fcoSvg}
     ${abswSvg}
     ${poleSvg}
+    ${schoorSvg}
+  </svg>`;
+}
+
+/**
+ * Membangun SVG Lambang Resmi PT PLN (Persero) sesuai spesifikasi vektor resmi:
+ * - Bidang Persegi Kuning (#FFF200 / #f7e82e)
+ * - 3 Gelombang Sinus Biru Muda / Cyan (#00AEEF / #28a8e0)
+ * - Petir Kilat Merah (#ED1C24 / #e62a2b) dengan geometri asli PLN
+ */
+export function buildOfficialPlnLogoSvg(
+  width: number = 38,
+  height: number = 38
+): string {
+  return `<svg width="${width}" height="${height}" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" style="display:block;flex-shrink:0;">
+    <rect x="0.35" y="0.35" width="31.3" height="31.3" fill="#FFF200" stroke="#0f172a" stroke-width="0.7" />
+    <!-- Tiga Gelombang Arus Bolak-Balik Resmi PLN (#00AEEF) -->
+    <path d="m 6.451,11.694 c 0.839,-0.463 2.014,-0.828 2.955,-0.828 1.797,0 2.213,0.828 3.096,0.828 0.883,0 1.79,-0.828 3.423,-0.828 1.486,0 2.271,0.828 3.591,0.828 1.323,0 1.048,-0.828 2.91,-0.828 1.853,0 2.701,0.828 2.701,0.828 l 0,2.111 c 0,0 -0.989,-0.881 -2.544,-0.902 -1.543,-0.018 -1.502,0.902 -3.063,0.902 -1.562,0 -1.687,-0.902 -3.521,-0.902 -1.833,0 -2.11,0.902 -3.526,0.902 -1.42,0 -1.686,-0.939 -3.165,-0.92 -1.479,0.018 -2.857,0.92 -2.857,0.92 l 0,-2.111 z" fill="#00AEEF" fill-rule="evenodd" clip-rule="evenodd" />
+    <path d="M 6.451,16.617 C 7.29,16.153 8.465,15.79 9.406,15.79 c 1.797,0 2.213,0.827 3.096,0.827 0.883,0 1.79,-0.827 3.423,-0.827 1.486,0 2.271,0.827 3.591,0.827 1.323,0 1.048,-0.827 2.91,-0.827 1.853,0 2.701,0.827 2.701,0.827 l 0,2.112 c 0,0 -0.989,-0.887 -2.544,-0.903 -1.543,-0.015 -1.502,0.903 -3.063,0.903 -1.562,0 -1.687,-0.903 -3.521,-0.903 -1.833,0 -2.11,0.903 -3.526,0.903 -1.42,0 -1.686,-0.937 -3.165,-0.918 -1.479,0.015 -2.857,0.918 -2.857,0.918 l 0,-2.112 z" fill="#00AEEF" fill-rule="evenodd" clip-rule="evenodd" />
+    <path d="m 6.451,21.536 c 0.839,-0.466 2.014,-0.828 2.955,-0.828 1.797,0 2.213,0.828 3.096,0.828 0.883,0 1.79,-0.828 3.423,-0.828 1.486,0 2.271,0.828 3.591,0.828 1.323,0 1.048,-0.828 2.91,-0.828 1.853,0 2.701,0.828 2.701,0.828 l 0,2.118 c 0,0 -0.989,-0.888 -2.544,-0.907 -1.543,-0.016 -1.502,0.907 -3.063,0.907 -1.562,0 -1.687,-0.907 -3.521,-0.907 -1.833,0 -2.11,0.907 -3.526,0.907 -1.42,0 -1.686,-0.94 -3.165,-0.923 -1.479,0.016 -2.857,0.923 -2.857,0.923 l 0,-2.118 z" fill="#00AEEF" fill-rule="evenodd" clip-rule="evenodd" />
+    <!-- Petir Merah Resmi PT PLN (Persero) (#ED1C24) -->
+    <polygon points="14.904,28.364 17.273,16.461 8.856,20.163 13.775,4.534 17.782,4.534 13.112,15.369 21.423,12.007" fill="#ED1C24" fill-rule="evenodd" clip-rule="evenodd" />
   </svg>`;
 }
 
@@ -750,52 +787,82 @@ export function calculatePoleCalloutOffset(
     }
   });
 
-  // Pilih sisi offset yang paling jauh dari sudut jalur kabel
+  // Kandidat arah di sekeliling tiang (atas, bawah, serong atas/bawah, kiri/kanan)
   const candidates: Array<{
     dx: number;
     dy: number;
     anchorSide: 'left' | 'right';
   }> = [
-    { dx: 44, dy: -28, anchorSide: 'left' },
-    { dx: -44, dy: -28, anchorSide: 'right' },
-    { dx: 46, dy: 24, anchorSide: 'left' },
-    { dx: -46, dy: 24, anchorSide: 'right' },
-    { dx: 52, dy: 0, anchorSide: 'left' },
-    { dx: -52, dy: 0, anchorSide: 'right' },
+    { dx: 0, dy: -36, anchorSide: 'left' },
+    { dx: 0, dy: 34, anchorSide: 'left' },
+    { dx: -38, dy: -32, anchorSide: 'right' },
+    { dx: 38, dy: 30, anchorSide: 'left' },
+    { dx: 38, dy: -32, anchorSide: 'left' },
+    { dx: -38, dy: 30, anchorSide: 'right' },
+    { dx: -48, dy: 0, anchorSide: 'right' },
+    { dx: 48, dy: 0, anchorSide: 'left' },
   ];
 
-  // Urutan preferensi diselang-seling berdasarkan nodeIndex agar antar tiang bersebelahan tidak saling bertabrakan
+  // Urutan preferensi diselang-seling (atas vs bawah) agar tiang bersebelahan atau titik berhimpit (trafo sisipan) tidak bertumpuk
   const preferredOrder =
     nodeIndex % 2 === 0
-      ? [0, 3, 2, 1, 4, 5]
-      : [1, 2, 3, 0, 5, 4];
-
-  if (connectedVectors.length === 0) {
-    return candidates[preferredOrder[0]];
-  }
+      ? [0, 2, 4, 1, 3, 5, 6, 7]
+      : [1, 3, 5, 0, 2, 4, 7, 6];
 
   let bestCandidate = candidates[preferredOrder[0]];
-  let bestClearanceScore = -Infinity;
+  let bestScore = -Infinity;
 
   preferredOrder.forEach((candIdx, rank) => {
     const cand = candidates[candIdx];
-    const mag = Math.sqrt(cand.dx * cand.dx + cand.dy * cand.dy);
+    const mag = Math.sqrt(cand.dx * cand.dx + cand.dy * cand.dy) || 1;
     const ux = cand.dx / mag;
     const uy = cand.dy / mag;
 
     // Semakin kecil dot product maksimum terhadap kabel terhubung, semakin bebas dari menabrak garis kabel
+    let maxAbsCosine = 0;
     let maxCosine = -1;
     connectedVectors.forEach((v) => {
       const dot = ux * v.vx + uy * v.vy;
-      if (dot > maxCosine) {
-        maxCosine = dot;
+      if (dot > maxCosine) maxCosine = dot;
+      if (Math.abs(dot) > maxAbsCosine) maxAbsCosine = Math.abs(dot);
+    });
+
+    // Hindari menabrak tiang lain atau posisi callout tiang sebelumnya yang berdekatan
+    const candLat = node.lat - cand.dy * 0.0000045;
+    const candLng = node.lng + cand.dx * 0.0000055;
+    let crowdingPenalty = 0;
+
+    allNodes.forEach((other, otherIdx) => {
+      if (other.id === node.id) return;
+      const dPolePx = Math.hypot(
+        (candLng - other.lng) / 0.0000055,
+        (other.lat - candLat) / 0.0000045
+      );
+      if (dPolePx < 36) {
+        crowdingPenalty += (36 - dPolePx) * 0.6;
+      }
+      if (otherIdx < nodeIndex) {
+        const otherPref = candidates[otherIdx % 2 === 0 ? 0 : 1];
+        const otherCalloutLat = other.lat - otherPref.dy * 0.0000045;
+        const otherCalloutLng = other.lng + otherPref.dx * 0.0000055;
+        const dCalloutPx = Math.hypot(
+          (candLng - otherCalloutLng) / 0.0000055,
+          (otherCalloutLat - candLat) / 0.0000045
+        );
+        if (dCalloutPx < 58) {
+          crowdingPenalty += (58 - dCalloutPx) * 0.8;
+        }
       }
     });
 
-    // Skor kebebasan jalur + bonus urutan selang-seling
-    const clearanceScore = (1 - maxCosine) * 10 - rank * 0.35;
-    if (clearanceScore > bestClearanceScore) {
-      bestClearanceScore = clearanceScore;
+    const cableClearance =
+      connectedVectors.length > 0
+        ? (1 - maxCosine) * 8 + (1 - maxAbsCosine) * 6
+        : 10;
+    const score = cableClearance - rank * 0.45 - crowdingPenalty;
+
+    if (score > bestScore) {
+      bestScore = score;
       bestCandidate = cand;
     }
   });
@@ -1646,110 +1713,171 @@ export function updateRabPackageHeaderVolume(
  * - Memastikan setiap baris detail di bawah Header Paket (+ | SJ6 | Unit | Vol) memiliki parentPackageCode & unitQtyPerPackage
  * - Memperbaiki volume detail yang bernilai 0 padahal volume Header Paket > 0
  * - Mengganti item JASA_BONGKAR yang sempat tersimpan secara keliru di dalam paket pasang (seperti P12C-1, P12C-2, CM5-3) menjadi Upah Pasang
+ * - Meng-upgrade rincian komponen paket konstruksi lama (misal CC10 7 item lama -> CC10 13 item resmi Standar Konstruksi PRK 2019 / HSS 2020)
  */
 export function normalizeRabPackageItems(items: RabLineItem[]): RabLineItem[] {
-  let activeHeader: RabLineItem | null = null;
+  const result: RabLineItem[] = [];
+  let i = 0;
 
-  return items.map((row) => {
+  while (i < items.length) {
+    const row = items[i];
+
     if (row.isPackageHeader) {
-      activeHeader = row;
-      return row;
-    }
+      result.push(row);
+      const effectivePkgCode = (row.parentPackageCode || row.uraian || '').trim().toUpperCase();
+      const pkgDef = CONSTRUCTION_PACKAGES_CATALOG.find(
+        (p) => p.code.toUpperCase() === effectivePkgCode
+      );
 
-    const effectivePkgCode = (
-      row.parentPackageCode ||
-      (activeHeader && activeHeader.section === row.section
-        ? activeHeader.parentPackageCode || activeHeader.uraian
-        : '') ||
-      ''
-    ).toUpperCase();
+      // Kumpulkan seluruh baris anak yang berurutan tepat di bawah header paket ini pada seksi yang sama
+      const childRows: RabLineItem[] = [];
+      let j = i + 1;
+      while (j < items.length) {
+        const nextRow = items[j];
+        if (nextRow.isPackageHeader || nextRow.section !== row.section) {
+          break;
+        }
+        const nextPkgCode = (nextRow.parentPackageCode || '').trim().toUpperCase();
+        if (nextPkgCode && nextPkgCode !== effectivePkgCode) {
+          break;
+        }
+        // Pastikan baris ini memang bagian dari paket atau berada langsung di bawah header
+        const matchesAnyComp = pkgDef?.components.some((comp) => {
+          if (nextRow.khsId && comp.khsId === nextRow.khsId) return true;
+          const khs = KHS_MASTER_CATALOG[comp.khsId];
+          return khs && khs.uraian === nextRow.uraian;
+        });
+        if (!nextPkgCode && !matchesAnyComp && !nextRow.id.includes('pkg')) {
+          break;
+        }
+        childRows.push(nextRow);
+        j++;
+      }
 
-    if (!effectivePkgCode) {
-      return row;
-    }
+      const headerVol = Number(row.volume) > 0 ? Number(row.volume) : 0;
+      const effectiveMult = headerVol > 0 ? headerVol : 1;
 
-    const pkgDef = CONSTRUCTION_PACKAGES_CATALOG.find(
-      (p) => p.code.toUpperCase() === effectivePkgCode
-    );
-    if (!pkgDef) {
-      return row;
-    }
+      if (pkgDef && pkgDef.category !== 'BONGKAR' && childRows.length >= 3) {
+        const exactMatch =
+          childRows.length === pkgDef.components.length &&
+          pkgDef.components.every((comp, idx) => childRows[idx]?.khsId === comp.khsId);
 
-    const headerForPkg =
-      items.find(
-        (h) =>
-          h.isPackageHeader &&
-          h.section === row.section &&
-          (h.parentPackageCode || h.uraian || '').toUpperCase() === effectivePkgCode
-      ) || activeHeader;
-
-    const headerVol =
-      headerForPkg && Number(headerForPkg.volume) > 0
-        ? Number(headerForPkg.volume)
-        : 0;
-
-    // Cek apakah baris ini cocok dengan komponen paket konstruksi (atau item bongkar lama yang harus diganti ke Upah Pasang)
-    let matchedComp = pkgDef.components.find((comp) => {
-      if (row.khsId && comp.khsId === row.khsId) return true;
-      const khs = KHS_MASTER_CATALOG[comp.khsId];
-      return khs && khs.uraian === row.uraian;
-    });
-
-    let updatedUraian = row.uraian;
-    let updatedKhsId = row.khsId;
-    let updatedHarga = row.hargaSatuan;
-
-    if (
-      !matchedComp &&
-      pkgDef.category !== 'BONGKAR' &&
-      row.gol === 'JASA' &&
-      (row.uraian.toLowerCase().includes('bongkar') ||
-        (row.khsId && row.khsId.startsWith('JASA_BONGKAR_')))
-    ) {
-      const pasangComp = pkgDef.components.find((comp) => {
-        const khs = KHS_MASTER_CATALOG[comp.khsId];
-        return khs && khs.gol === 'JASA' && !comp.khsId.startsWith('JASA_BONGKAR_');
-      });
-      if (pasangComp) {
-        matchedComp = pasangComp;
-        const pasangKhs = KHS_MASTER_CATALOG[pasangComp.khsId];
-        if (pasangKhs) {
-          updatedUraian = pasangKhs.uraian;
-          updatedKhsId = pasangComp.khsId;
-          updatedHarga = pasangKhs.hargaSatuan;
+        if (!exactMatch) {
+          // Upgrade rincian material paket lama ke daftar komponen resmi Standar Konstruksi PRK 2019 / HSS 2020
+          pkgDef.components.forEach((comp, idx) => {
+            const khs = KHS_MASTER_CATALOG[comp.khsId];
+            if (!khs) return;
+            const existingMatch = childRows.find((c) => c.khsId === comp.khsId);
+            const compVol =
+              headerVol > 0
+                ? Math.round(comp.qty * effectiveMult * 100) / 100
+                : existingMatch && existingMatch.volume > 0
+                ? existingMatch.volume
+                : 0;
+            result.push({
+              id: existingMatch?.id || `${row.id}-comp-${idx + 1}-${comp.khsId}`,
+              section: row.section,
+              itemNo: idx + 1,
+              uraian: khs.uraian,
+              gol: khs.gol,
+              satuan: khs.satuan,
+              volume: compVol,
+              hargaSatuan: khs.hargaSatuan,
+              khsId: comp.khsId,
+              parentHeaderId: row.id,
+              parentPackageCode: pkgDef.code,
+              unitQtyPerPackage: comp.qty,
+              sourceInfo: row.sourceInfo || `${pkgDef.code} (${effectiveMult} Unit)`,
+            });
+          });
+          i = j;
+          continue;
         }
       }
+
+      // Normalisasi baris anak yang sudah sesuai atau baris uji parsial (< 3 baris)
+      for (const child of childRows) {
+        let matchedComp = pkgDef?.components.find((comp) => {
+          if (child.khsId && comp.khsId === child.khsId) return true;
+          const khs = KHS_MASTER_CATALOG[comp.khsId];
+          return khs && khs.uraian === child.uraian;
+        });
+
+        let updatedUraian = child.uraian;
+        let updatedKhsId = child.khsId;
+        let updatedHarga = child.hargaSatuan;
+        let updatedSatuan = child.satuan;
+
+        if (
+          !matchedComp &&
+          pkgDef &&
+          pkgDef.category !== 'BONGKAR' &&
+          child.gol === 'JASA' &&
+          (child.uraian.toLowerCase().includes('bongkar') ||
+            (child.khsId && child.khsId.startsWith('JASA_BONGKAR_')) ||
+            child.khsId === 'JASA_KONST_CC3' ||
+            child.khsId === 'JASA_KONST_CC1')
+        ) {
+          const pasangComp = pkgDef.components.find((comp) => {
+            const khs = KHS_MASTER_CATALOG[comp.khsId];
+            return khs && khs.gol === 'JASA' && !comp.khsId.startsWith('JASA_BONGKAR_');
+          });
+          if (pasangComp) {
+            matchedComp = pasangComp;
+            const pasangKhs = KHS_MASTER_CATALOG[pasangComp.khsId];
+            if (pasangKhs) {
+              updatedUraian = pasangKhs.uraian;
+              updatedKhsId = pasangComp.khsId;
+              updatedHarga = pasangKhs.hargaSatuan;
+              updatedSatuan = pasangKhs.satuan;
+            }
+          }
+        } else if (matchedComp) {
+          const officialKhs = KHS_MASTER_CATALOG[matchedComp.khsId];
+          if (officialKhs) {
+            updatedUraian = officialKhs.uraian;
+            updatedKhsId = matchedComp.khsId;
+            updatedHarga = officialKhs.hargaSatuan;
+            updatedSatuan = officialKhs.satuan;
+          }
+        }
+
+        const baseUnitQty =
+          child.unitQtyPerPackage && child.unitQtyPerPackage > 0
+            ? child.unitQtyPerPackage
+            : matchedComp
+            ? matchedComp.qty
+            : child.volume > 0 && headerVol > 0
+            ? Math.round((child.volume / headerVol) * 10000) / 10000
+            : 1;
+
+        const repairedVol =
+          headerVol > 0 && (!child.volume || child.volume <= 0)
+            ? Math.round(baseUnitQty * headerVol * 100) / 100
+            : child.volume;
+
+        result.push({
+          ...child,
+          uraian: updatedUraian,
+          satuan: updatedSatuan,
+          khsId: updatedKhsId,
+          hargaSatuan: updatedHarga,
+          parentHeaderId: child.parentHeaderId || row.id,
+          parentPackageCode: pkgDef ? pkgDef.code : effectivePkgCode,
+          unitQtyPerPackage: baseUnitQty,
+          volume: repairedVol,
+        });
+      }
+
+      i = j;
+      continue;
     }
 
-    // Jika baris ini memang bagian dari paket konstruksi
-    if (row.parentPackageCode || matchedComp) {
-      const baseUnitQty =
-        row.unitQtyPerPackage && row.unitQtyPerPackage > 0
-          ? row.unitQtyPerPackage
-          : matchedComp
-          ? matchedComp.qty
-          : row.volume > 0 && headerVol > 0
-          ? Math.round((row.volume / headerVol) * 10000) / 10000
-          : 1;
+    result.push(row);
+    i++;
+  }
 
-      const repairedVol =
-        headerVol > 0 && (!row.volume || row.volume <= 0)
-          ? Math.round(baseUnitQty * headerVol * 100) / 100
-          : row.volume;
-
-      return {
-        ...row,
-        uraian: updatedUraian,
-        khsId: updatedKhsId,
-        hargaSatuan: updatedHarga,
-        parentPackageCode: pkgDef.code,
-        unitQtyPerPackage: baseUnitQty,
-        volume: repairedVol,
-      };
-    }
-
-    return row;
-  });
+  return result;
 }
 
 export interface RabRowCostBreakdown {
@@ -1924,6 +2052,7 @@ export interface EtiketProjectedNodeInput {
   x: number;
   y: number;
   lines: string[];
+  isBongkar?: boolean;
 }
 
 export interface EtiketProjectedSpanInput {
@@ -2058,6 +2187,7 @@ export function computeEtiketCalloutLayout(params: {
   defaultMainRoadCenter: { x: number; y: number };
   defaultSimpangRoadCenter: { x: number; y: number };
   showRoadSketch?: boolean;
+  legendRect?: EtiketRect;
 }): EtiketLayoutResult {
   const {
     nodes,
@@ -2065,6 +2195,7 @@ export function computeEtiketCalloutLayout(params: {
     defaultMainRoadCenter,
     defaultSimpangRoadCenter,
     showRoadSketch = true,
+    legendRect,
   } = params;
 
   const SVG_MIN_X = 10;
@@ -2072,21 +2203,52 @@ export function computeEtiketCalloutLayout(params: {
   const SVG_MIN_Y = 10;
   const SVG_MAX_Y = 450;
 
-  // Obstacle list: starts with North Arrow (U) and all Pole Symbols
+  // Obstacle list: North Arrow (U), Keterangan Gambar table, and all Pole Symbols
   const obstacles: EtiketRect[] = [
     // North Arrow at (55, 55), radius 28
     { x: 24, y: 24, w: 62, h: 62 },
   ];
 
+  if (legendRect && legendRect.w > 0 && legendRect.h > 0) {
+    obstacles.push(legendRect);
+  } else if (!legendRect && !showRoadSketch) {
+    // Default Keterangan Gambar table area in top-left of Etiket SVG
+    obstacles.push({ x: 20, y: 20, w: 226, h: 165 });
+  }
+
   const poleRects: EtiketRect[] = nodes.map((n) => ({
-    x: n.x - 13,
-    y: n.y - 13,
-    w: 26,
-    h: 26,
+    x: n.x - 14,
+    y: n.y - 14,
+    w: 28,
+    h: 28,
   }));
   obstacles.push(...poleRects);
 
-  // 1. Place Span Midpoint Badges without overlapping poles or other span badges
+  // Protect the phase tick (/// or ////) zone at ~28% along each span so badges & callouts never cover it
+  spans.forEach((sp) => {
+    const dx = sp.x2 - sp.x1;
+    const dy = sp.y2 - sp.y1;
+    const segLen = Math.hypot(dx, dy);
+    if (segLen >= 24) {
+      const minClear = Math.min(20, segLen * 0.36);
+      const rawDist = segLen * 0.28;
+      const clampedDist = Math.max(
+        minClear,
+        Math.min(segLen - minClear, rawDist)
+      );
+      const ratio = clampedDist / segLen;
+      const tx = sp.x1 + dx * ratio;
+      const ty = sp.y1 + dy * ratio;
+      obstacles.push({
+        x: tx - 9,
+        y: ty - 9,
+        w: 18,
+        h: 18,
+      });
+    }
+  });
+
+  // 1. Place Span Midpoint Badges without overlapping poles, phase ticks, or other span badges
   const spanBadges: EtiketPlacedSpanBadge[] = spans.map((sp) => {
     const badgeW = sp.badgeW;
     const badgeH = sp.badgeH ?? 16;
@@ -2100,19 +2262,28 @@ export function computeEtiketCalloutLayout(params: {
     const tx = dx / segLen;
     const ty = dy / segLen;
 
-    const offsets: Array<[number, number]> = [
-      [0, 0],
-      [16, 0],
-      [-16, 0],
-      [0, 12],
-      [0, -12],
-      [26, 0],
-      [-26, 0],
-      [20, 12],
-      [-20, -12],
-      [36, 0],
-      [-36, 0],
-    ];
+    const shiftAlongSpan = segLen >= 70 ? Math.min(14, segLen * 0.08) : 0;
+    const offsets: Array<[number, number]> =
+      segLen >= 68
+        ? [
+            [0, shiftAlongSpan],
+            [0, 0],
+            [15, 0],
+            [-15, 0],
+            [18, shiftAlongSpan],
+            [-18, shiftAlongSpan],
+            [24, 0],
+            [-24, 0],
+            [32, 0],
+            [-32, 0],
+          ]
+        : [
+            [16, 0],
+            [-16, 0],
+            [22, 0],
+            [-22, 0],
+            [0, 0],
+          ];
 
     let chosenCenter = { x: midX, y: midY };
     for (const [dn, dt] of offsets) {
@@ -2158,83 +2329,139 @@ export function computeEtiketCalloutLayout(params: {
     };
   });
 
-  // 2. Place Pole Callout Boxes with 2D directional candidates + grid fallback
+  // 2. Place Pole Callout Boxes with dynamic width fitted to text length + zero-overlap placement
   const placedCalloutRects: EtiketRect[] = [];
   const placedLeaders: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
 
   const nodePlacements: EtiketPlacedNodeCallout[] = nodes.map((n, idx) => {
-    const boxWidth = 124;
-    const boxHeight = Math.max(26, 15 + n.lines.length * 10);
+    const headerText = `${n.kodeTiang || ''}${n.isBongkar ? ' ✕ BKR' : ''}`.trim();
+    const maxLineChars = n.lines.reduce(
+      (max, line) => Math.max(max, line.trim().length),
+      0
+    );
+    const maxChars = Math.max(headerText.length, maxLineChars, 5);
+    // Lebar kotak otomatis menyesuaikan panjang karakter teks di dalamnya (tanpa ruang kosong berlebihan)
+    const boxWidth = Math.max(
+      46,
+      Math.min(148, Math.ceil(maxChars * 5.3 + 11))
+    );
+    const boxHeight = Math.max(
+      16,
+      (n.lines.length > 0 ? 15 : 14) + n.lines.length * 10
+    );
 
-    const preferRight =
+    // Prediksi orientasi jaringan di sekitar titik ini (apakah dominan horizontal atau vertikal)
+    let sumAbsDx = 0;
+    let sumAbsDy = 0;
+    spans.forEach((sp) => {
+      const d1 = Math.hypot(sp.x1 - n.x, sp.y1 - n.y);
+      const d2 = Math.hypot(sp.x2 - n.x, sp.y2 - n.y);
+      if (d1 < 6 || d2 < 6) {
+        sumAbsDx += Math.abs(sp.x2 - sp.x1);
+        sumAbsDy += Math.abs(sp.y2 - sp.y1);
+      }
+    });
+    const isMostlyHorizontal = sumAbsDx >= sumAbsDy;
+    const preferTopOrRight =
       n.kind === 'GARDU_TRAFO' || n.kind === 'GARDU_RENCANA'
         ? false
         : idx % 2 === 0;
 
     const candidatePositions: Array<{ x: number; y: number; preferred: boolean }> = [];
-    const radii = [32, 54, 78, 106, 138];
+    const radii = [24, 38, 54, 72, 94, 118, 146];
 
     radii.forEach((r) => {
+      // Kandidat Atas & Bawah (tegak lurus jalur kabel horizontal)
+      const xOffsets = [
+        -boxWidth / 2,
+        -boxWidth * 0.75,
+        -boxWidth * 0.25,
+        -boxWidth - 6,
+        6,
+        -boxWidth - 22,
+        22,
+      ];
+      const topY = n.y - boxHeight - r;
+      const bottomY = n.y + r;
+
+      const verticalPairs = preferTopOrRight
+        ? [
+            { y: topY, pref: isMostlyHorizontal },
+            { y: bottomY, pref: false },
+          ]
+        : [
+            { y: bottomY, pref: isMostlyHorizontal },
+            { y: topY, pref: false },
+          ];
+
+      // Kandidat Kanan & Kiri (tegak lurus jalur kabel vertikal)
       const yOffsets = [
         -boxHeight / 2,
-        -boxHeight + 8,
-        -6,
-        -boxHeight - 10,
-        12,
-        -boxHeight - 28,
-        28,
+        -boxHeight - 6,
+        6,
+        -boxHeight + 4,
+        -4,
+        -boxHeight - 20,
+        20,
       ];
       const rightX = n.x + r;
       const leftX = n.x - boxWidth - r;
 
-      const sidePairs = preferRight
+      const horizontalPairs = preferTopOrRight
         ? [
-            { x: rightX, pref: true },
+            { x: rightX, pref: !isMostlyHorizontal },
             { x: leftX, pref: false },
           ]
         : [
-            { x: leftX, pref: true },
+            { x: leftX, pref: !isMostlyHorizontal },
             { x: rightX, pref: false },
           ];
 
-      sidePairs.forEach((side) => {
-        yOffsets.forEach((yo) => {
-          candidatePositions.push({
-            x: side.x,
-            y: n.y + yo,
-            preferred: side.pref,
+      if (isMostlyHorizontal) {
+        verticalPairs.forEach((vp) => {
+          xOffsets.forEach((xo, xoIdx) => {
+            candidatePositions.push({
+              x: n.x + xo,
+              y: vp.y,
+              preferred: vp.pref && xoIdx <= 2,
+            });
           });
         });
-      });
-
-      // Above and below candidates (especially helpful at the top or bottom of a road curve)
-      const xOffsets = [
-        -boxWidth / 2,
-        12,
-        -boxWidth - 12,
-        -boxWidth * 0.25,
-        -boxWidth * 0.75,
-        36,
-        -boxWidth - 36,
-      ];
-      xOffsets.forEach((xo) => {
-        candidatePositions.push({
-          x: n.x + xo,
-          y: n.y - boxHeight - r * 0.75,
-          preferred: false,
+        horizontalPairs.forEach((hp) => {
+          yOffsets.forEach((yo) => {
+            candidatePositions.push({
+              x: hp.x,
+              y: n.y + yo,
+              preferred: false,
+            });
+          });
         });
-        candidatePositions.push({
-          x: n.x + xo,
-          y: n.y + r * 0.75,
-          preferred: false,
+      } else {
+        horizontalPairs.forEach((hp) => {
+          yOffsets.forEach((yo, yoIdx) => {
+            candidatePositions.push({
+              x: hp.x,
+              y: n.y + yo,
+              preferred: hp.pref && yoIdx <= 2,
+            });
+          });
         });
-      });
+        verticalPairs.forEach((vp) => {
+          xOffsets.forEach((xo) => {
+            candidatePositions.push({
+              x: n.x + xo,
+              y: vp.y,
+              preferred: false,
+            });
+          });
+        });
+      }
     });
 
     // Add full 2D canvas grid fallback sorted by distance to pole (n.x, n.y)
     const gridCandidates: Array<{ x: number; y: number; dist: number }> = [];
-    for (let gx = SVG_MIN_X; gx <= SVG_MAX_X - boxWidth; gx += 26) {
-      for (let gy = SVG_MIN_Y; gy <= SVG_MAX_Y - boxHeight; gy += 20) {
+    for (let gx = SVG_MIN_X; gx <= SVG_MAX_X - boxWidth; gx += 24) {
+      for (let gy = SVG_MIN_Y; gy <= SVG_MAX_Y - boxHeight; gy += 18) {
         const cx = gx + boxWidth / 2;
         const cy = gy + boxHeight / 2;
         gridCandidates.push({
@@ -2251,11 +2478,14 @@ export function computeEtiketCalloutLayout(params: {
 
     let bestX = Math.max(
       SVG_MIN_X,
-      Math.min(SVG_MAX_X - boxWidth, preferRight ? n.x + 34 : n.x - boxWidth - 34)
+      Math.min(SVG_MAX_X - boxWidth, n.x - boxWidth / 2)
     );
     let bestY = Math.max(
       SVG_MIN_Y,
-      Math.min(SVG_MAX_Y - boxHeight, n.y - boxHeight / 2)
+      Math.min(
+        SVG_MAX_Y - boxHeight,
+        preferTopOrRight ? n.y - boxHeight - 28 : n.y + 28
+      )
     );
     let bestScore = Infinity;
 
@@ -2276,8 +2506,8 @@ export function computeEtiketCalloutLayout(params: {
         h: boxHeight,
       };
 
-      // Hard check: must NOT overlap any obstacle (other callouts, pole circles, span badges, North arrow)
-      if (obstacles.some((obs) => rectsOverlap(candRect, obs, 5))) {
+      // Hard check: must NOT overlap any obstacle (other callouts, pole circles, span badges, North arrow, Legend table)
+      if (obstacles.some((obs) => rectsOverlap(candRect, obs, 6))) {
         continue;
       }
 
@@ -2287,13 +2517,21 @@ export function computeEtiketCalloutLayout(params: {
 
       let penalty = dist;
       if (cand.preferred) {
-        penalty -= 14;
+        penalty -= 18;
       }
 
       // Penalize if this pole's leader line cuts through any already-placed callout box
       for (const prevBox of placedCalloutRects) {
-        if (segmentIntersectsRect(n.x, n.y, anchorX, anchorY, prevBox, 3)) {
-          penalty += 500;
+        if (segmentIntersectsRect(n.x, n.y, anchorX, anchorY, prevBox, 4)) {
+          penalty += 600;
+        }
+      }
+
+      // Penalize if this pole's leader line cuts through another pole symbol
+      for (let pIdx = 0; pIdx < poleRects.length; pIdx++) {
+        if (pIdx === idx) continue;
+        if (segmentIntersectsRect(n.x, n.y, anchorX, anchorY, poleRects[pIdx], 2)) {
+          penalty += 380;
         }
       }
 
@@ -2306,10 +2544,10 @@ export function computeEtiketCalloutLayout(params: {
             prevLeader.x2,
             prevLeader.y2,
             candRect,
-            3
+            4
           )
         ) {
-          penalty += 500;
+          penalty += 600;
         }
         if (
           segmentsIntersect(
@@ -2323,14 +2561,14 @@ export function computeEtiketCalloutLayout(params: {
             prevLeader.y2
           )
         ) {
-          penalty += 250;
+          penalty += 350;
         }
       }
 
-      // Penalize if the callout box sits directly on top of a span cable line
+      // Strongly penalize if the callout box sits on or near a span cable line
       for (const sp of spans) {
-        if (segmentIntersectsRect(sp.x1, sp.y1, sp.x2, sp.y2, candRect, 2)) {
-          penalty += 90;
+        if (segmentIntersectsRect(sp.x1, sp.y1, sp.x2, sp.y2, candRect, 6)) {
+          penalty += 550;
         }
       }
 
@@ -2339,7 +2577,7 @@ export function computeEtiketCalloutLayout(params: {
         bestX = Math.round(cand.x * 10) / 10;
         bestY = Math.round(cand.y * 10) / 10;
         // Early exit if we found an ideal close candidate with zero leader/span crossings
-        if (penalty < 55) {
+        if (penalty < 42) {
           break;
         }
       }

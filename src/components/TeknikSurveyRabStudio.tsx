@@ -54,6 +54,7 @@ import {
   getCableScreenAngleDeg,
   getActiveLegendItems,
   formatDateDdMmYyyy,
+  buildOfficialPlnLogoSvg,
 } from '../utils/rabCalculator';
 import { parseCoordinate } from '../utils/plnValidation';
 import {
@@ -323,6 +324,13 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     startY: number;
   }>({ mouseX: 0, mouseY: 0, startX: 690, startY: 16 });
   const [draggingCalloutNodeId, setDraggingCalloutNodeId] = useState<string | null>(null);
+  const [draggingSchoorOnSvg, setDraggingSchoorOnSvg] = useState<{
+    nodeId: string;
+    schoorIdx: number;
+    centerX: number;
+    centerY: number;
+  } | null>(null);
+  const [hideMapPoi, setHideMapPoi] = useState<boolean>(true);
   const calloutDragStart = useRef<{
     mouseX: number;
     mouseY: number;
@@ -957,17 +965,18 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     });
     L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
+    const poiStyleParam = hideMapPoi
+      ? '&apistyle=s.t:2%7Cp.v:off,s.t:4%7Cp.v:off'
+      : '';
     const tile = L.tileLayer(
       tileLayerMode === 'satellite'
-        ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-        : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        ? 'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
+        : `https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}${poiStyleParam}`,
       {
-        maxNativeZoom: 19,
+        subdomains: ['0', '1', '2', '3'],
+        maxNativeZoom: 21,
         maxZoom: 22,
-        attribution:
-          tileLayerMode === 'satellite'
-            ? '© Esri, Maxar, Earthstar Geographics • Studio GIS PLN'
-            : '© OpenStreetMap • Studio GIS PLN',
+        attribution: '© Google Maps • Studio GIS PLN',
       }
     ).addTo(map);
 
@@ -1042,21 +1051,24 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     };
   }, [viewTab]);
 
-  // Switch Street / Satellite tile layer
+  // Switch Street / Satellite tile layer with Google Maps (and respect POI visibility)
   useEffect(() => {
     if (!tileLayerRef.current) return;
+    const poiStyleParam = hideMapPoi
+      ? '&apistyle=s.t:2%7Cp.v:off,s.t:4%7Cp.v:off'
+      : '';
     if (tileLayerMode === 'satellite') {
-      tileLayerRef.current.options.maxNativeZoom = 19;
+      tileLayerRef.current.options.maxNativeZoom = 20;
       tileLayerRef.current.setUrl(
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+        'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
       );
     } else {
-      tileLayerRef.current.options.maxNativeZoom = 19;
+      tileLayerRef.current.options.maxNativeZoom = 21;
       tileLayerRef.current.setUrl(
-        'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+        `https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}${poiStyleParam}`
       );
     }
-  }, [tileLayerMode]);
+  }, [tileLayerMode, hideMapPoi]);
 
   // Invalidate map size when fullscreen toggles
   useEffect(() => {
@@ -1206,9 +1218,15 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         }
       });
 
-      // Span Midpoint Label Pill
+      // Span Midpoint Label Pill (Fleksibel / Draggable)
       const midLat = (fromNode.lat + toNode.lat) / 2;
       const midLng = (fromNode.lng + toNode.lng) / 2;
+      const spanMapOffset = customCalloutOffsets[`map_span_${span.id}`] || {
+        dx: 0,
+        dy: 0,
+      };
+      const badgeLat = midLat - spanMapOffset.dy * 0.0000045;
+      const badgeLng = midLng + spanMapOffset.dx * 0.0000055;
       const primaryCable = cables[0];
       const vis = getCableVisualStyle(
         primaryCable.jenisJaringan,
@@ -1218,17 +1236,33 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       );
       const spanBongkar = isSpanMarkedBongkar(span);
 
+      if (Math.hypot(spanMapOffset.dx, spanMapOffset.dy) > 4) {
+        L.polyline(
+          [
+            [midLat, midLng],
+            [badgeLat, badgeLng],
+          ],
+          {
+            color: spanBongkar ? '#dc2626' : vis.strokeColor,
+            weight: 1.2,
+            dashArray: '2, 3',
+            opacity: 0.85,
+          }
+        ).addTo(group);
+      }
+
       const badgeHtml = `
-        <div style="display:inline-flex;align-items:center;background:${
+        <div style="display:inline-flex;align-items:center;cursor:grab;background:${
           isSelected ? '#1e1b4b' : 'rgba(255,255,255,0.96)'
         };color:${isSelected ? '#ffffff' : '#0f172a'};border:1.5px solid ${
         vis.strokeColor
-      };border-radius:999px;padding:1px 6px;font-size:10px;font-weight:800;white-space:nowrap;box-shadow:0 1px 4px rgba(15,23,42,0.18);">
+      };border-radius:999px;padding:1px 6px;font-size:10px;font-weight:800;white-space:nowrap;box-shadow:0 1px 4px rgba(15,23,42,0.18);" title="Geser untuk memindahkan tanda jarak (${span.distanceMeters}m)">
           <span>${span.distanceMeters}m${spanBongkar ? ' (BKR)' : ''}</span>
         </div>
       `;
 
-      const midMarker = L.marker([midLat, midLng], {
+      const midMarker = L.marker([badgeLat, badgeLng], {
+        draggable: true,
         icon: L.divIcon({
           className: 'pln-span-mid-badge',
           html: badgeHtml,
@@ -1236,6 +1270,16 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
           iconAnchor: [30, 10],
         }),
       }).addTo(group);
+
+      midMarker.on('dragend', () => {
+        const pos = midMarker.getLatLng();
+        const newDy = Math.round((midLat - pos.lat) / 0.0000045);
+        const newDx = Math.round((pos.lng - midLng) / 0.0000055);
+        setCustomCalloutOffsets((prev) => ({
+          ...prev,
+          [`map_span_${span.id}`]: { dx: newDx, dy: newDy },
+        }));
+      });
 
       midMarker.on('click', (ev) => {
         L.DomEvent.stopPropagation(ev);
@@ -1447,66 +1491,83 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         setShowInspector(true);
       });
 
-      // Interactive Schoor / Anchor Pull Direction Handles directly on the anchor arrows (tanpa bulatan kuning terpisah)
+      // Interactive Schoor / Skur Rotation directly on the SVG arrow inside poleMarker (tanpa menggeser tiang)
       const nodeSym = resolveNodeDrawingSymbol(node);
-      if (nodeSym.hasSchoor) {
-        nodeSym.schoorAngleDegList.forEach((angleDeg, sIdx) => {
-          const rad = (angleDeg * Math.PI) / 180;
-          // Posisikan handle tepat di ujung / kepala panah anchor
-          const handleLat = node.lat - Math.sin(rad) * 0.00010;
-          const handleLng = node.lng + Math.cos(rad) * 0.00010;
+      const markerEl = poleMarker.getElement();
+      if (nodeSym.hasSchoor && markerEl) {
+        const gripElements = markerEl.querySelectorAll('.pln-schoor-arrow-grip');
+        gripElements.forEach((gripNode) => {
+          const gripEl = gripNode as SVGGElement;
+          const sIdx = Number(gripEl.getAttribute('data-schoor-idx') || '0');
 
-          // Hit area transparan di atas panah skur untuk memutar langsung pada panahnya
-          const schoorHandle = L.marker([handleLat, handleLng], {
-            draggable: true,
-            title: `Skur #${sIdx + 1} (${angleDeg}°): Tekan & geser untuk memutar arah tarikan`,
-            icon: L.divIcon({
-              className: 'pln-schoor-arrow-handle',
-              html: `<div style="width:22px;height:22px;cursor:grab;background:transparent;" title="Putar arah Skur #${sIdx + 1} (${angleDeg}°)"></div>`,
-              iconSize: [22, 22],
-              iconAnchor: [11, 11],
-            }),
-          }).addTo(group);
+          const startRotateSchoor = (startEv: MouseEvent | TouchEvent) => {
+            startEv.stopPropagation();
+            startEv.preventDefault();
+            L.DomEvent.stopPropagation(startEv as unknown as Event);
 
-          schoorHandle.on('drag', () => {
-            const pos = schoorHandle.getLatLng();
-            const dLat = pos.lat - node.lat;
-            const dLng = pos.lng - node.lng;
-            const liveAngle = Math.round((Math.atan2(-dLat, dLng) * 180) / Math.PI);
-            const st = stateRef.current;
-            const nextNodes = st.nodes.map((n) => {
-              if (n.id !== node.id) return n;
-              const curList = resolveNodeDrawingSymbol(n).schoorAngleDegList;
-              const nextList = [...curList];
-              nextList[sIdx] = liveAngle;
-              return {
-                ...n,
-                schoorAngleDeg: sIdx === 0 ? liveAngle : n.schoorAngleDeg,
-                schoorAngleDegList: nextList,
-              };
-            });
-            commitGraphUpdate(nextNodes, st.spans, false);
+            // Non-aktifkan drag tiang & drag peta sementara saat memutar panah skur
+            poleMarker.dragging?.disable();
+            map.dragging.disable();
+
+            const rect = markerEl.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            let latestAngle = nodeSym.schoorAngleDegList[sIdx] ?? -35;
+
+            const onMove = (moveEv: MouseEvent | TouchEvent) => {
+              const clientX =
+                'touches' in moveEv && moveEv.touches.length > 0
+                  ? moveEv.touches[0].clientX
+                  : (moveEv as MouseEvent).clientX;
+              const clientY =
+                'touches' in moveEv && moveEv.touches.length > 0
+                  ? moveEv.touches[0].clientY
+                  : (moveEv as MouseEvent).clientY;
+              const dx = clientX - centerX;
+              const dy = clientY - centerY;
+              if (Math.hypot(dx, dy) > 2) {
+                latestAngle = Math.round((Math.atan2(dy, dx) * 180) / Math.PI);
+                gripEl.setAttribute('transform', `rotate(${latestAngle})`);
+              }
+            };
+
+            const onUp = () => {
+              window.removeEventListener('mousemove', onMove);
+              window.removeEventListener('mouseup', onUp);
+              window.removeEventListener('touchmove', onMove);
+              window.removeEventListener('touchend', onUp);
+
+              poleMarker.dragging?.enable();
+              map.dragging.enable();
+
+              const st = stateRef.current;
+              const nextNodes = st.nodes.map((n) => {
+                if (n.id !== node.id) return n;
+                const curList = [...resolveNodeDrawingSymbol(n).schoorAngleDegList];
+                curList[sIdx] = latestAngle;
+                return {
+                  ...n,
+                  schoorAngleDeg: sIdx === 0 ? latestAngle : n.schoorAngleDeg,
+                  schoorAngleDegList: curList,
+                };
+              });
+              commitGraphUpdate(nextNodes, st.spans, false);
+              setSelectedNodeId(node.id);
+            };
+
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+            window.addEventListener('touchmove', onMove, { passive: false });
+            window.addEventListener('touchend', onUp);
+          };
+
+          gripEl.addEventListener('mousedown', startRotateSchoor);
+          gripEl.addEventListener('touchstart', startRotateSchoor, {
+            passive: false,
           });
-
-          schoorHandle.on('dragend', () => {
-            const pos = schoorHandle.getLatLng();
-            const dLat = pos.lat - node.lat;
-            const dLng = pos.lng - node.lng;
-            const nextAngle = Math.round((Math.atan2(-dLat, dLng) * 180) / Math.PI);
-            const st = stateRef.current;
-            const nextNodes = st.nodes.map((n) => {
-              if (n.id !== node.id) return n;
-              const curList = resolveNodeDrawingSymbol(n).schoorAngleDegList;
-              const nextList = [...curList];
-              nextList[sIdx] = nextAngle;
-              return {
-                ...n,
-                schoorAngleDeg: sIdx === 0 ? nextAngle : n.schoorAngleDeg,
-                schoorAngleDegList: nextList,
-              };
-            });
-            commitGraphUpdate(nextNodes, st.spans, false);
-            setSelectedNodeId(node.id);
+          gripEl.addEventListener('click', (clickEv) => {
+            clickEv.stopPropagation();
+            L.DomEvent.stopPropagation(clickEv);
           });
         });
       }
@@ -1534,18 +1595,36 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
       const lines = formatPoleCalloutLines(node);
       const visibleLines = calloutCompactMode ? lines.slice(0, 2) : lines;
+      const headerChars = (node.kodeTiang || '').length + (nodeBongkar ? 6 : 0);
+      const maxLineChars = visibleLines.reduce(
+        (m, l) => Math.max(m, l.trim().length),
+        0
+      );
+      const maxChars = Math.max(headerChars, maxLineChars, 5);
+      const estBoxW = Math.max(
+        48,
+        Math.min(156, Math.ceil(maxChars * 5.8 + 14))
+      );
+      const estBoxH = Math.max(
+        20,
+        (visibleLines.length > 0 ? 18 : 16) + visibleLines.length * 12
+      );
 
       const calloutHtml = `
         <div style="background:rgba(255,255,255,0.96);border:1.5px solid ${
           isSelected ? '#4f46e5' : isPlanned ? '#dc2626' : '#1e293b'
-        };border-radius:6px;padding:3px 7px;min-width:86px;box-shadow:0 3px 8px rgba(15,23,42,0.18);font-family:ui-monospace,monospace;">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;border-bottom:1px solid #e2e8f0;padding-bottom:2px;margin-bottom:2px;">
-            <span style="font-size:10px;font-weight:800;color:${
+        };border-radius:5px;padding:2px 6px;display:inline-block;width:max-content;box-shadow:0 3px 8px rgba(15,23,42,0.18);font-family:ui-monospace,monospace;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;${
+            visibleLines.length > 0
+              ? 'border-bottom:1px solid #e2e8f0;padding-bottom:1.5px;margin-bottom:1.5px;'
+              : ''
+          }">
+            <span style="font-size:10px;font-weight:800;white-space:nowrap;color:${
               isPlanned ? '#dc2626' : '#0f172a'
             };">${node.kodeTiang}</span>
             ${
               nodeBongkar
-                ? `<span style="background:#dc2626;color:#fff;font-size:8px;font-weight:800;padding:0 3px;border-radius:3px;">✕ BKR</span>`
+                ? `<span style="background:#dc2626;color:#fff;font-size:8px;font-weight:800;padding:0 3px;border-radius:3px;white-space:nowrap;">✕ BKR</span>`
                 : ''
             }
           </div>
@@ -1563,8 +1642,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         icon: L.divIcon({
           className: 'pln-pole-callout-box',
           html: calloutHtml,
-          iconSize: [96, 46],
-          iconAnchor: [48, 23],
+          iconSize: [estBoxW, estBoxH],
+          iconAnchor: [Math.round(estBoxW / 2), Math.round(estBoxH / 2)],
         }),
       }).addTo(group);
 
@@ -1777,7 +1856,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
   // Download Berkas Survei (Surat Permohonan + Tabel RAB Resmi PLN + Gambar Sketsa Ber-Etiket PLN)
   const handleDownloadSurveyBundle = () => {
-    const effectiveRab =
+    const rawRab =
       rabItems.length === 0 && (nodes.length > 0 || spans.length > 0)
         ? generateRabItemsFromSurvey({
             nodes,
@@ -1786,29 +1865,294 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             transportasiRit,
           })
         : rabItems;
+    const effectiveRab = normalizeRabPackageItems(rawRab);
     const summary = calculateRabSummary(effectiveRab, ppnPercent);
     const grouped = groupRabItemsByRomanSection(effectiveRab);
-    const svgMarkup = svgRef.current ? svgRef.current.outerHTML : '';
+    const svgMarkup = svgRef.current
+      ? svgRef.current.outerHTML.replace(
+          /<svg\b([^>]*)>/i,
+          '<svg$1 style="width:100%;height:auto;max-height:130mm;display:block;background:#f8fafc;">'
+        )
+      : '';
 
-    const rabRowsHtml = grouped
+    const ppnMdu = Math.round((summary.subTotalMdu * ppnPercent) / 100);
+    const ppnHardware = Math.round((summary.subTotalHardware * ppnPercent) / 100);
+    const ppnJasa = Math.round((summary.subTotalJasa * ppnPercent) / 100);
+    const totalMduWithPpn = summary.subTotalMdu + ppnMdu;
+    const totalHardwareWithPpn = summary.subTotalHardware + ppnHardware;
+    const totalJasaWithPpn = summary.subTotalJasa + ppnJasa;
+
+    // Flatten and paginate RAB rows into A4 Portrait pages so long RABs automatically split onto new A4 pages
+    type FlatDocRabRow =
+      | { kind: 'SECTION_HEADER'; code: string; title: string }
+      | { kind: 'PACKAGE_HEADER'; row: RabLineItem }
+      | { kind: 'LINE_ITEM'; row: RabLineItem; seq: number };
+
+    const flatDocRabRows: FlatDocRabRow[] = [];
+    grouped
       .filter((sec) => sec.items.length > 0)
-      .map((sec) => {
+      .forEach((sec) => {
         let seq = 0;
-        const secHeader = `<tr style="background:#f1f5f9;font-weight:800;"><td style="border:1px solid #334155;padding:4px;text-align:center;">${sec.code}</td><td colspan="9" style="border:1px solid #334155;padding:4px 8px;">${sec.title}</td></tr>`;
-        const itemRows = sec.items
-          .map((row) => {
-            if (row.isPackageHeader) {
-              seq = 0;
-              return `<tr style="background:#fef3c7;font-weight:800;"><td style="border:1px solid #334155;padding:4px;text-align:center;">+</td><td style="border:1px solid #334155;padding:4px 8px;">[${row.uraian}] ${row.sourceInfo || ''}</td><td style="border:1px solid #334155;padding:4px;text-align:center;">-</td><td style="border:1px solid #334155;padding:4px;text-align:center;">${row.satuan || 'Unit'}</td><td style="border:1px solid #334155;padding:4px;text-align:center;">${row.volume}</td><td colspan="5" style="border:1px solid #334155;padding:4px;text-align:right;">-</td></tr>`;
-            }
+        flatDocRabRows.push({
+          kind: 'SECTION_HEADER',
+          code: sec.code,
+          title: sec.title,
+        });
+        sec.items.forEach((row) => {
+          if (row.isPackageHeader) {
+            seq = 0;
+            flatDocRabRows.push({ kind: 'PACKAGE_HEADER', row });
+          } else {
             seq += 1;
-            const brk = calculateRabRowBreakdown(row);
-            return `<tr><td style="border:1px solid #334155;padding:4px;text-align:center;">${row.itemNo ?? seq}</td><td style="border:1px solid #334155;padding:4px 8px;">${row.parentPackageCode ? '↳ ' : ''}${row.uraian}</td><td style="border:1px solid #334155;padding:4px;text-align:center;">${row.gol}</td><td style="border:1px solid #334155;padding:4px;text-align:center;">${row.satuan}</td><td style="border:1px solid #334155;padding:4px;text-align:center;font-weight:700;">${row.volume}</td><td style="border:1px solid #334155;padding:4px;text-align:right;">${row.hargaSatuan.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:4px;text-align:right;">${brk.mdu.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:4px;text-align:right;">${brk.hardware.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:4px;text-align:right;">${brk.jasa.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:4px;text-align:right;font-weight:700;">${brk.jumlah.toLocaleString('id-ID')}</td></tr>`;
-          })
-          .join('');
-        return secHeader + itemRows;
+            flatDocRabRows.push({
+              kind: 'LINE_ITEM',
+              row,
+              seq: row.itemNo ?? seq,
+            });
+          }
+        });
+      });
+
+    const rabDocPages: FlatDocRabRow[][] = [];
+    if (flatDocRabRows.length <= 20) {
+      rabDocPages.push(flatDocRabRows);
+    } else {
+      let cursor = 0;
+      while (cursor < flatDocRabRows.length) {
+        const isFirst = rabDocPages.length === 0;
+        const maxRowsThisPage = isFirst ? 25 : 30;
+        let endIdx = Math.min(cursor + maxRowsThisPage, flatDocRabRows.length);
+        // Prevent leaving a section header or package header orphaned at the bottom of a page
+        if (endIdx < flatDocRabRows.length) {
+          while (
+            endIdx > cursor + 4 &&
+            (flatDocRabRows[endIdx - 1].kind === 'SECTION_HEADER' ||
+              flatDocRabRows[endIdx - 1].kind === 'PACKAGE_HEADER')
+          ) {
+            endIdx -= 1;
+          }
+        }
+        rabDocPages.push(flatDocRabRows.slice(cursor, endIdx));
+        cursor = endIdx;
+      }
+      // If the final page has too many rows to fit the tfoot recap + signatures on A4, split it onto a new A4 page
+      const lastChunk = rabDocPages[rabDocPages.length - 1];
+      if (lastChunk && lastChunk.length > 22) {
+        let splitAt = 22;
+        while (
+          splitAt > 6 &&
+          (lastChunk[splitAt - 1].kind === 'SECTION_HEADER' ||
+            lastChunk[splitAt - 1].kind === 'PACKAGE_HEADER')
+        ) {
+          splitAt -= 1;
+        }
+        rabDocPages[rabDocPages.length - 1] = lastChunk.slice(0, splitAt);
+        rabDocPages.push(lastChunk.slice(splitAt));
+      }
+    }
+
+    const renderDocRabRowHtml = (entry: FlatDocRabRow): string => {
+      if (entry.kind === 'SECTION_HEADER') {
+        return `<tr style="background:#e2e8f0;font-weight:800;"><td style="border:1px solid #0f172a;padding:3.5px 4px;text-align:center;">${entry.code}</td><td style="border:1px solid #0f172a;padding:3.5px 6px;font-weight:800;">${entry.title}</td><td style="border:1px solid #0f172a;"></td><td style="border:1px solid #0f172a;"></td><td style="border:1px solid #0f172a;"></td><td style="border:1px solid #0f172a;"></td><td style="border:1px solid #0f172a;"></td><td style="border:1px solid #0f172a;"></td><td style="border:1px solid #0f172a;"></td><td style="border:1px solid #0f172a;"></td></tr>`;
+      }
+      if (entry.kind === 'PACKAGE_HEADER') {
+        const row = entry.row;
+        const pkgCodeClean = row.parentPackageCode || row.uraian;
+        return `<tr style="background:#f8fafc;font-weight:800;"><td style="border:1px solid #0f172a;padding:3px 4px;text-align:center;">+</td><td style="border:1px solid #0f172a;padding:3px 6px;font-weight:800;">${pkgCodeClean}</td><td style="border:1px solid #0f172a;padding:3px 4px;text-align:center;"></td><td style="border:1px solid #0f172a;padding:3px 4px;text-align:center;">${row.satuan || 'Unit'}</td><td style="border:1px solid #0f172a;padding:3px 4px;text-align:center;font-weight:800;">${row.volume}</td><td style="border:1px solid #0f172a;"></td><td style="border:1px solid #0f172a;"></td><td style="border:1px solid #0f172a;"></td><td style="border:1px solid #0f172a;"></td><td style="border:1px solid #0f172a;"></td></tr>`;
+      }
+      const { row, seq } = entry;
+      const brk = calculateRabRowBreakdown(row);
+      return `<tr><td style="border:1px solid #0f172a;padding:3px 4px;text-align:center;">${seq}</td><td style="border:1px solid #0f172a;padding:3px 6px;">${row.uraian}</td><td style="border:1px solid #0f172a;padding:3px 4px;text-align:center;">${row.gol}</td><td style="border:1px solid #0f172a;padding:3px 4px;text-align:center;">${row.satuan}</td><td style="border:1px solid #0f172a;padding:3px 4px;text-align:center;">${row.volume}</td><td style="border:1px solid #0f172a;padding:3px 5px;text-align:right;">${row.hargaSatuan.toLocaleString('id-ID')}</td><td style="border:1px solid #0f172a;padding:3px 5px;text-align:right;">${brk.mdu.toLocaleString('id-ID')}</td><td style="border:1px solid #0f172a;padding:3px 5px;text-align:right;">${brk.hardware.toLocaleString('id-ID')}</td><td style="border:1px solid #0f172a;padding:3px 5px;text-align:right;">${brk.jasa.toLocaleString('id-ID')}</td><td style="border:1px solid #0f172a;padding:3px 5px;text-align:right;font-weight:700;">${brk.jumlah.toLocaleString('id-ID')}</td></tr>`;
+    };
+
+    const activeLegendItems = getActiveLegendItems(nodes, spans);
+    const anyBaruDoc = activeLegendItems.some((r) => r.hasBaru);
+    const anyEksDoc = activeLegendItems.some((r) => r.hasEksisting);
+    const showBothColsDoc = anyBaruDoc && anyEksDoc;
+
+    let betonBaruDoc = 0;
+    let betonEksDoc = 0;
+    let besiBaruDoc = 0;
+    let besiEksDoc = 0;
+    const pkgSummaryMap = new Map<string, number>();
+
+    nodes.forEach((n) => {
+      const isBkr = isNodeMarkedBongkar(n);
+      const sym = resolveNodeDrawingSymbol(n);
+      if (!sym.isGardu) {
+        if (sym.poleMaterial === 'BESI') {
+          if (sym.isPlanned) besiBaruDoc += 1;
+          else besiEksDoc += 1;
+        } else {
+          if (sym.isPlanned) betonBaruDoc += 1;
+          else betonEksDoc += 1;
+        }
+      }
+      if (!isBkr) {
+        (n.constructions || []).forEach((c) => {
+          if (c.actionType === 'BONGKAR') return;
+          const code = c.code.trim().toUpperCase();
+          if (!code) return;
+          pkgSummaryMap.set(code, (pkgSummaryMap.get(code) || 0) + (Number(c.qty) || 1));
+        });
+      }
+    });
+
+    const cableByLegendKeyDoc = new Map<string, Map<string, number>>();
+    spans.forEach((sp) => {
+      const dist = Number(sp.distanceMeters) || 0;
+      getEffectiveSpanCables(sp).forEach((cb) => {
+        if (cb.actionType === 'BONGKAR') return;
+        const meters = dist * (cb.circuitCount || 1);
+        const cleanCond = cb.conductorType.replace(/\s+3\s*Phase/i, '');
+        const phaseCount = inferPhaseCountFromConductor(cb.conductorType, cb.phaseCount);
+        const upperCond = cb.conductorType.toUpperCase();
+        let lKey = '';
+        if (upperCond.includes('VANG NET') || upperCond.includes('VANGNET')) {
+          lKey = 'VANG_NET';
+        } else if (upperCond.includes('MVTIC')) {
+          lKey = 'MVTIC';
+        } else if (cb.jenisJaringan === 'JTM') {
+          lKey = phaseCount === 1 ? 'JTM_1P' : 'JTM_3P';
+        } else if (cb.jenisJaringan === 'JTR' || cb.jenisJaringan === 'SR') {
+          lKey = phaseCount === 1 ? 'JTR_1P' : 'JTR_3P';
+        }
+        if (lKey) {
+          const subMap = cableByLegendKeyDoc.get(lKey) || new Map<string, number>();
+          subMap.set(cleanCond, (subMap.get(cleanCond) || 0) + meters);
+          cableByLegendKeyDoc.set(lKey, subMap);
+        }
+      });
+    });
+
+    const getDocRowMaterialDetail = (key: string, baseLabel: string): string => {
+      if (key === 'TIANG_BETON') {
+        const parts: string[] = [];
+        if (betonBaruDoc > 0) parts.push(`${betonBaruDoc} Btg`);
+        if (betonEksDoc > 0 && betonBaruDoc === 0) parts.push(`${betonEksDoc} Eks`);
+        return parts.length > 0 ? `${baseLabel} (${parts.join(', ')})` : baseLabel;
+      }
+      if (key === 'TIANG_BESI') {
+        const parts: string[] = [];
+        if (besiBaruDoc > 0) parts.push(`${besiBaruDoc} Btg`);
+        if (besiEksDoc > 0 && besiBaruDoc === 0) parts.push(`${besiEksDoc} Eks`);
+        return parts.length > 0 ? `${baseLabel} (${parts.join(', ')})` : baseLabel;
+      }
+      const cMap = cableByLegendKeyDoc.get(key);
+      if (cMap && cMap.size > 0) {
+        const specs: string[] = [];
+        cMap.forEach((m, cond) => specs.push(`${cond}: ${m}m`));
+        return `${baseLabel} (${specs.join(', ')})`;
+      }
+      if (key === 'SCHOOR') {
+        let skurQty = 0;
+        pkgSummaryMap.forEach((q, code) => {
+          if (
+            code.startsWith('SE') ||
+            code.startsWith('CE1') ||
+            code.startsWith('CE2') ||
+            code.startsWith('CE6') ||
+            code.includes('SKUR')
+          ) {
+            skurQty += q;
+          }
+        });
+        return skurQty > 0 ? `${baseLabel} (${skurQty} Set)` : baseLabel;
+      }
+      return baseLabel;
+    };
+
+    const buildDocLegendSymbolSvg = (key: string, isBaru: boolean): string => {
+      const col = isBaru ? '#dc2626' : '#0f172a';
+      const cx = 22;
+      let inner = '';
+      if (key === 'TIANG_BETON') {
+        inner = `<g transform="translate(${cx}, 7)"><circle r="4.5" fill="#fff" stroke="${col}" stroke-width="1.3" /><line x1="-3" y1="-3" x2="3" y2="3" stroke="${col}" stroke-width="1.2" /><line x1="-3" y1="3" x2="3" y2="-3" stroke="${col}" stroke-width="1.2" /></g>`;
+      } else if (key === 'TIANG_BESI') {
+        inner = `<circle cx="${cx}" cy="7" r="4.5" fill="${col}" stroke="#0f172a" stroke-width="${isBaru ? '0.8' : '0'}" />`;
+      } else if (key === 'JTM_3P') {
+        inner = `<line x1="${cx - 18}" y1="7" x2="${cx + 18}" y2="7" stroke="${col}" stroke-width="2.6" />`;
+      } else if (key === 'JTM_1P') {
+        inner = `<line x1="${cx - 18}" y1="7" x2="${cx + 18}" y2="7" stroke="${col}" stroke-width="2.6" stroke-dasharray="4,3" />`;
+      } else if (key === 'JTR_1P') {
+        inner = `<line x1="${cx - 18}" y1="7" x2="${cx + 18}" y2="7" stroke="${col}" stroke-width="1.8" /><line x1="${cx - 5}" y1="10.5" x2="${cx - 2}" y2="3.5" stroke="${col}" stroke-width="1.2" /><line x1="${cx - 1.5}" y1="10.5" x2="${cx + 1.5}" y2="3.5" stroke="${col}" stroke-width="1.2" /><line x1="${cx + 2}" y1="10.5" x2="${cx + 5}" y2="3.5" stroke="${col}" stroke-width="1.2" />`;
+      } else if (key === 'JTR_3P') {
+        inner = `<line x1="${cx - 18}" y1="7" x2="${cx + 18}" y2="7" stroke="${col}" stroke-width="1.8" /><line x1="${cx - 6.5}" y1="10.5" x2="${cx - 3.5}" y2="3.5" stroke="${col}" stroke-width="1.2" /><line x1="${cx - 3}" y1="10.5" x2="${cx}" y2="3.5" stroke="${col}" stroke-width="1.2" /><line x1="${cx + 0.5}" y1="10.5" x2="${cx + 3.5}" y2="3.5" stroke="${col}" stroke-width="1.2" /><line x1="${cx + 4}" y1="10.5" x2="${cx + 7}" y2="3.5" stroke="${col}" stroke-width="1.2" />`;
+      } else if (key === 'TRAFO_1P') {
+        inner = `<polygon points="${cx},2 ${cx - 6},11 ${cx + 6},11" fill="${col}" stroke="#0f172a" stroke-width="0.7" />`;
+      } else if (key === 'TRAFO_3P') {
+        inner = `<polygon points="${cx - 5},3 ${cx - 10},11 ${cx},11" fill="${col}" /><polygon points="${cx},3 ${cx - 5},11 ${cx + 5},11" fill="${col}" /><polygon points="${cx + 5},3 ${cx},11 ${cx + 10},11" fill="${col}" />`;
+      } else if (key === 'FCO') {
+        inner = `<text x="${cx}" y="11" font-size="8.5" font-weight="900" text-anchor="middle" fill="${col}">S</text><line x1="${cx - 4}" y1="12" x2="${cx + 4}" y2="2" stroke="${col}" stroke-width="1.2" />`;
+      } else if (key === 'ABSW') {
+        inner = `<line x1="${cx - 12}" y1="7" x2="${cx - 2.5}" y2="7" stroke="${col}" stroke-width="1.4" /><line x1="${cx - 2.5}" y1="3.5" x2="${cx - 2.5}" y2="10.5" stroke="${col}" stroke-width="1.4" /><line x1="${cx + 2.5}" y1="3.5" x2="${cx + 2.5}" y2="10.5" stroke="${col}" stroke-width="1.4" /><line x1="${cx + 2.5}" y1="7" x2="${cx + 12}" y2="7" stroke="${col}" stroke-width="1.4" />`;
+      } else if (key === 'VANG_NET') {
+        inner = `<line x1="${cx - 18}" y1="7" x2="${cx + 18}" y2="7" stroke="#0284c7" stroke-width="1.8" />`;
+      } else if (key === 'SCHOOR') {
+        inner = `<line x1="${cx - 10}" y1="11" x2="${cx + 7}" y2="4" stroke="${col}" stroke-width="1.6" /><polygon points="${cx + 9},3 ${cx + 3},3 ${cx + 6},8" fill="${col}" />`;
+      } else if (key === 'MVTIC') {
+        inner = `<line x1="${cx - 18}" y1="7" x2="${cx + 18}" y2="7" stroke="${col}" stroke-width="2.6" stroke-dasharray="6,2.5,1.5,2.5,1.5,2.5" />`;
+      }
+      return `<svg width="44" height="14" viewBox="0 0 44 14" style="display:inline-block;vertical-align:middle;overflow:visible;">${inner}</svg>`;
+    };
+
+    const pkgSummaryPartsDoc: string[] = [];
+    pkgSummaryMap.forEach((qty, code) => pkgSummaryPartsDoc.push(`${code}: ${qty}`));
+
+    const legendTableRowsHtml = activeLegendItems
+      .map((row) => {
+        const detailLabel = getDocRowMaterialDetail(row.key, row.label);
+        const cells = showBothColsDoc
+          ? `<td style="padding:2px 6px;text-align:center;border-right:1px solid #e2e8f0;">${
+              row.hasBaru ? buildDocLegendSymbolSvg(row.key, true) : ''
+            }</td><td style="padding:2px 6px;text-align:center;">${
+              row.hasEksisting ? buildDocLegendSymbolSvg(row.key, false) : ''
+            }</td>`
+          : `<td style="padding:2px 6px;text-align:center;">${buildDocLegendSymbolSvg(
+              row.key,
+              anyBaruDoc ? row.hasBaru : false
+            )}</td>`;
+        return `<tr style="border-bottom:1px solid #e2e8f0;">
+          <td style="padding:2px 6px;text-align:center;font-weight:700;color:#1e293b;border-right:1px solid #e2e8f0;">${row.no}</td>
+          <td style="padding:2px 8px;font-weight:700;color:#0f172a;white-space:nowrap;border-right:1px solid #e2e8f0;">${detailLabel}</td>
+          ${cells}
+        </tr>`;
       })
       .join('');
+
+    const materialDipasangHtml = `
+      <div style="display:flex;flex-direction:column;gap:4px;margin-top:2px;width:100%;">
+        <div style="border:1px solid #1e293b;border-radius:3px;overflow:hidden;background:#ffffff;width:100%;">
+          <div style="background:#0f172a;color:#ffffff;padding:2.5px 8px;font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.3px;display:flex;justify-content:space-between;align-items:center;">
+            <span>KETERANGAN GAMBAR &amp; MATERIAL DIPASANG (${cableLegendLengths.plannedMeters}M)</span>
+            ${
+              pkgSummaryPartsDoc.length > 0
+                ? `<span style="font-size:8px;font-weight:700;color:#cbd5e1;">KONSTRUKSI: ${pkgSummaryPartsDoc.join(' • ')}</span>`
+                : ''
+            }
+          </div>
+          ${
+            activeLegendItems.length === 0
+              ? `<div style="padding:4px 8px;font-size:8.5px;color:#64748b;font-style:italic;">Belum ada objek / material di kanvas</div>`
+              : `<table style="border-collapse:collapse;font-size:8.5px;width:100%;">
+                  <thead>
+                    <tr style="background:#f1f5f9;border-bottom:1px solid #cbd5e1;font-weight:800;color:#1e293b;">
+                      <th style="padding:2px 6px;width:28px;text-align:center;border-right:1px solid #cbd5e1;">No</th>
+                      <th style="padding:2px 8px;text-align:left;border-right:1px solid #cbd5e1;">Nama Material / Jaringan</th>
+                      ${
+                        showBothColsDoc
+                          ? `<th style="padding:2px 8px;width:64px;text-align:center;color:#dc2626;border-right:1px solid #cbd5e1;">Baru</th><th style="padding:2px 8px;width:64px;text-align:center;color:#0f172a;">Eksisting</th>`
+                          : `<th style="padding:2px 8px;width:72px;text-align:center;color:${
+                              anyBaruDoc ? '#dc2626' : '#0f172a'
+                            };">${anyBaruDoc ? 'Baru' : 'Eksisting'}</th>`
+                      }
+                    </tr>
+                  </thead>
+                  <tbody>${legendTableRowsHtml}</tbody>
+                </table>`
+          }
+        </div>
+      </div>`;
 
     const suratPagesHtml = attachedSuratPages
       .map((pageData, idx) => {
@@ -1846,47 +2190,126 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       })
       .join('');
 
-    const htmlDoc = `<!DOCTYPE html>
-<html lang="id">
-<head>
-  <meta charset="UTF-8" />
-  <title>Berkas Survei & RAB PLN - ${item.noNodin || item.projectName}</title>
-  <style>
-    @page { size: A4 portrait; margin: 10mm; }
-    * { box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; color: #0f172a; margin: 0; padding: 10mm; font-size: 10.5px; background: #ffffff; }
-    h1, h2, h3 { margin: 0 0 4px 0; }
-    .page { width: 190mm; max-width: 100%; min-height: 265mm; margin: 0 auto 14mm auto; border: 1.5px solid #0f172a; padding: 10mm; page-break-after: always; background: #ffffff; }
-    .page:last-child { page-break-after: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: 9.5px; margin-top: 8px; }
-    th { background: #0f172a; color: #ffffff; border: 1px solid #334155; padding: 4px 5px; }
-    td { padding: 3.5px 5px; }
-    .sig-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; margin-top: 22px; text-align: center; font-size: 10.5px; page-break-inside: avoid; }
-    .sig-box { border: 1px solid #cbd5e1; border-radius: 4px; padding: 10px 8px; }
-    .sig-space { height: 56px; }
-    @media print {
-      body { padding: 0; }
-      .page { margin: 0 auto; border: 1px solid #0f172a; }
+    const rabPagesHtml = rabDocPages
+      .map((pageEntries, rIdx) => {
+        const isFirstRabPage = rIdx === 0;
+        const isLastRabPage = rIdx === rabDocPages.length - 1;
+        const pageRowsHtml = pageEntries.map(renderDocRabRowHtml).join('');
+        const lembarLabel =
+          rabDocPages.length > 1
+            ? ` (LEMBAR ${rIdx + 1} DARI ${rabDocPages.length})`
+            : '';
+
+        return `<div class="page">
+    <!-- Header Resmi PT PLN (Persero) dengan Lambang Resmi PLN -->
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        ${buildOfficialPlnLogoSvg(38, 38)}
+        <div style="line-height:1.25;">
+          <div style="font-size:11px;font-weight:800;letter-spacing:0.2px;">PT. PLN ( PERSERO )</div>
+          <div style="font-size:10.5px;font-weight:800;text-decoration:underline;">UNIT INDUK DISTRIBUSI JAWA TENGAH &amp; DIY</div>
+          <div style="font-size:9.5px;font-weight:700;color:#334155;">UP3 MAGELANG — ULP BOROBUDUR</div>
+        </div>
+      </div>
+      <div style="font-size:9px;font-weight:800;color:#334155;background:#f8fafc;border:1px solid #cbd5e1;padding:2px 6px;border-radius:3px;">
+        UKURAN A4 • RAB${lembarLabel}
+      </div>
+    </div>
+
+    <div style="text-align:center;margin:6px 0 6px 0;">
+      <h2 style="font-size:13px;font-weight:900;letter-spacing:0.4px;text-decoration:underline;">RENCANA ANGGARAN BIAYA (RAB)${
+        !isFirstRabPage ? ` — LANJUTAN LEMBAR ${rIdx + 1}` : ''
+      }</h2>
+    </div>
+
+    ${
+      isFirstRabPage
+        ? `<table class="pln-meta-table">
+      <tbody>
+        <tr>
+          <td style="width:82px;font-weight:700;">Pekerjaan</td>
+          <td style="width:10px;">:</td>
+          <td style="font-weight:800;">${judulGambar}</td>
+        </tr>
+        <tr>
+          <td style="font-weight:700;">Lokasi</td>
+          <td>:</td>
+          <td>${lokasiPekerjaan}</td>
+        </tr>
+        <tr>
+          <td style="font-weight:700;">Pelaksana</td>
+          <td>:</td>
+          <td>${pelaksanaPekerjaan}</td>
+        </tr>
+        <tr>
+          <td style="font-weight:700;">Anggaran</td>
+          <td>:</td>
+          <td>${jenisAnggaran}</td>
+        </tr>
+        <tr>
+          <td style="font-weight:700;">Nomor PRK</td>
+          <td>:</td>
+          <td>${nomorPrk || '-'}</td>
+        </tr>
+      </tbody>
+    </table>`
+        : `<div style="font-size:9.5px;margin-bottom:4px;padding:3px 6px;background:#f8fafc;border:1px solid #cbd5e1;display:flex;justify-content:space-between;">
+      <span><strong>Pekerjaan:</strong> ${judulGambar}</span>
+      <span><strong>Lokasi:</strong> ${lokasiPekerjaan}</span>
+    </div>`
     }
-  </style>
-</head>
-<body>
-  ${suratPagesHtml}
-  <div class="page">
-    <h2>RENCANA ANGGARAN BIAYA (RAB) RESMI PLN — ${judulGambar}</h2>
-    <p><strong>Lokasi:</strong> ${lokasiPekerjaan} | <strong>Pelaksana:</strong> ${pelaksanaPekerjaan} | <strong>PRK:</strong> ${nomorPrk}</p>
-    <table>
+
+    <table class="pln-rab-table">
       <thead>
-        <tr><th>NO</th><th>URAIAN</th><th>GOL</th><th>SAT</th><th>VOL</th><th>HARGA SATUAN</th><th>MDU</th><th>HARDWARE</th><th>JASA</th><th>JUMLAH</th></tr>
+        <tr>
+          <th rowspan="2" style="width:26px;">NO</th>
+          <th rowspan="2">URAIAN</th>
+          <th rowspan="2" style="width:40px;">GOL</th>
+          <th rowspan="2" style="width:36px;">SAT</th>
+          <th rowspan="2" style="width:36px;">VOL</th>
+          <th rowspan="2" style="width:70px;">HARGA<br/>SATUAN</th>
+          <th colspan="4">BIAYA YANG DIPERLUKAN ( Rp )</th>
+        </tr>
+        <tr>
+          <th style="width:66px;">MDU</th>
+          <th style="width:72px;">HARDWARE</th>
+          <th style="width:66px;">JASA</th>
+          <th style="width:76px;">JUMLAH</th>
+        </tr>
       </thead>
-      <tbody>${rabRowsHtml}</tbody>
-      <tfoot>
-        <tr style="font-weight:800;background:#f8fafc;"><td colspan="6" style="border:1px solid #334155;padding:5px;text-align:right;">SUB TOTAL</td><td style="border:1px solid #334155;padding:5px;text-align:right;">${summary.subTotalMdu.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:5px;text-align:right;">${summary.subTotalHardware.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:5px;text-align:right;">${summary.subTotalJasa.toLocaleString('id-ID')}</td><td style="border:1px solid #334155;padding:5px;text-align:right;">${summary.subTotalJumlah.toLocaleString('id-ID')}</td></tr>
-        <tr style="font-weight:800;background:#f8fafc;"><td colspan="9" style="border:1px solid #334155;padding:5px;text-align:right;">PPN ${ppnPercent}%</td><td style="border:1px solid #334155;padding:5px;text-align:right;">${summary.ppnAmount.toLocaleString('id-ID')}</td></tr>
-        <tr style="font-weight:900;background:#0f172a;color:#ffffff;"><td colspan="9" style="border:1px solid #334155;padding:5px;text-align:right;">TOTAL RAB (RP)</td><td style="border:1px solid #334155;padding:5px;text-align:right;">Rp ${summary.grandTotal.toLocaleString('id-ID')}</td></tr>
-      </tfoot>
+      <tbody>${pageRowsHtml}</tbody>
+      ${
+        isLastRabPage
+          ? `<tfoot>
+        <tr style="font-weight:800;background:#f8fafc;">
+          <td colspan="6" style="border:1px solid #0f172a;padding:4px 6px;text-align:left;">Jumlah MDU - Hardware - Jasa</td>
+          <td style="border:1px solid #0f172a;padding:4px 5px;text-align:right;">${summary.subTotalMdu.toLocaleString('id-ID')}</td>
+          <td style="border:1px solid #0f172a;padding:4px 5px;text-align:right;">${summary.subTotalHardware.toLocaleString('id-ID')}</td>
+          <td style="border:1px solid #0f172a;padding:4px 5px;text-align:right;">${summary.subTotalJasa.toLocaleString('id-ID')}</td>
+          <td style="border:1px solid #0f172a;padding:4px 5px;text-align:right;">${summary.subTotalJumlah.toLocaleString('id-ID')}</td>
+        </tr>
+        <tr style="font-weight:800;background:#f8fafc;">
+          <td colspan="6" style="border:1px solid #0f172a;padding:4px 6px;text-align:left;">PPN ${ppnPercent}%</td>
+          <td style="border:1px solid #0f172a;padding:4px 5px;text-align:right;">${ppnMdu.toLocaleString('id-ID')}</td>
+          <td style="border:1px solid #0f172a;padding:4px 5px;text-align:right;">${ppnHardware.toLocaleString('id-ID')}</td>
+          <td style="border:1px solid #0f172a;padding:4px 5px;text-align:right;">${ppnJasa.toLocaleString('id-ID')}</td>
+          <td style="border:1px solid #0f172a;padding:4px 5px;text-align:right;">${summary.ppnAmount.toLocaleString('id-ID')}</td>
+        </tr>
+        <tr style="font-weight:900;background:#e2e8f0;">
+          <td colspan="6" style="border:1px solid #0f172a;padding:4.5px 6px;text-align:left;">Jumlah Total</td>
+          <td style="border:1px solid #0f172a;padding:4.5px 5px;text-align:right;">${totalMduWithPpn.toLocaleString('id-ID')}</td>
+          <td style="border:1px solid #0f172a;padding:4.5px 5px;text-align:right;">${totalHardwareWithPpn.toLocaleString('id-ID')}</td>
+          <td style="border:1px solid #0f172a;padding:4.5px 5px;text-align:right;">${totalJasaWithPpn.toLocaleString('id-ID')}</td>
+          <td style="border:1px solid #0f172a;padding:4.5px 5px;text-align:right;">${summary.grandTotal.toLocaleString('id-ID')}</td>
+        </tr>
+      </tfoot>`
+          : ''
+      }
     </table>
-    <p style="margin-top:8px;font-weight:700;font-style:italic;">Terbilang: ${summary.terbilang}</p>
+    ${
+      isLastRabPage
+        ? `<p style="margin-top:6px;margin-bottom:2px;font-weight:700;font-style:italic;">Terbilang : ${summary.terbilang}</p>
+    <p style="margin-top:2px;font-size:9px;color:#334155;">Harga yang dipakai adalah RAB HSS</p>
     <div class="sig-grid">
       <div class="sig-box">
         <div>Mengetahui / Setuju Dilaksanakan,</div>
@@ -1900,9 +2323,97 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         <div class="sig-space"></div>
         <div style="font-weight:800;text-decoration:underline;">( BAREP ARIYANTO )</div>
       </div>
+    </div>`
+        : `<div style="margin-top:8px;text-align:right;font-size:9px;font-style:italic;font-weight:700;color:#475569;">
+      Bersambung ke halaman RAB berikutnya (Lembar ${rIdx + 2} dari ${rabDocPages.length})...
+    </div>`
+    }
+  </div>`;
+      })
+      .join('');
+
+    const htmlDoc = `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <title>Berkas Survei & RAB PLN - ${item.noNodin || item.projectName}</title>
+  <style>
+    @page { size: A4 portrait; margin: 10mm; }
+    @page landscape-drawing { size: A4 landscape; margin: 8mm; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #0f172a; margin: 0; padding: 10mm; font-size: 10px; background: #ffffff; }
+    h1, h2, h3 { margin: 0; }
+    .page { width: 210mm; max-width: 100%; min-height: 297mm; margin: 0 auto 14mm auto; border: 1.5px solid #0f172a; padding: 9mm 10mm; page-break-after: always; background: #ffffff; }
+    .page:last-child { page-break-after: auto; }
+    .page-landscape { page: landscape-drawing; width: 297mm; max-width: 100%; min-height: 210mm; margin: 0 auto 14mm auto; border: 1.5px solid #0f172a; padding: 6mm 8mm; page-break-before: always; page-break-after: auto; background: #ffffff; }
+    .pln-rab-table { width: 100%; border-collapse: collapse; font-size: 9px; margin-top: 8px; }
+    .pln-rab-table th { background: #f1f5f9; color: #0f172a; border: 1px solid #0f172a; padding: 4px 4px; font-weight: 800; text-align: center; vertical-align: middle; }
+    .pln-rab-table td { padding: 3px 5px; }
+    .pln-meta-table { border-collapse: collapse; font-size: 10px; margin-top: 6px; margin-bottom: 6px; }
+    .pln-meta-table td { padding: 1.5px 4px; vertical-align: top; }
+    .sig-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; margin-top: 18px; text-align: center; font-size: 10px; page-break-inside: avoid; }
+    .sig-box { padding: 6px 8px; }
+    .sig-space { height: 48px; }
+    @media print {
+      body { padding: 0; }
+      .page { width: 190mm; min-height: 277mm; margin: 0 auto; border: none; padding: 2mm; }
+      .page-landscape { margin: 0 auto; border: none; padding: 3mm; width: 281mm; min-height: 190mm; }
+    }
+  </style>
+</head>
+<body>
+  ${suratPagesHtml}
+  ${rabPagesHtml}
+  ${
+    svgMarkup
+      ? `<div class="page-landscape">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+      <h2 style="font-size:12px;font-weight:900;letter-spacing:0.3px;">GAMBAR SKETSA SURVEI BER-ETIKET PLN</h2>
+      <span style="font-size:9.5px;font-weight:700;color:#334155;">FORMAT LANDSCAPE A4 • SKALA: NTS</span>
     </div>
-  </div>
-  ${svgMarkup ? `<div class="page"><h2>GAMBAR SKETSA SURVEI BER-ETIKET PLN</h2><div style="margin-top:8px;">${svgMarkup}</div></div>` : ''}
+    <div style="border:2px solid #0f172a;background:#ffffff;overflow:hidden;">
+      <div>${svgMarkup}</div>
+      <div style="border-top:2px solid #0f172a;display:flex;align-items:stretch;font-size:9.5px;background:#ffffff;">
+        <div style="flex:1.4;border-right:1.5px solid #0f172a;padding:5px 8px;display:flex;flex-direction:column;justify-content:flex-start;gap:4px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #cbd5e1;padding-bottom:3px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              ${buildOfficialPlnLogoSvg(24, 24)}
+              <div>
+                <div style="font-weight:900;font-size:10px;">PT. PLN (PERSERO) UID JAWA TENGAH &amp; DIY</div>
+                <div style="font-weight:700;font-size:8.5px;color:#334155;">UP3 MAGELANG — ULP BOROBUDUR</div>
+              </div>
+            </div>
+            <span style="font-size:8.5px;font-weight:800;background:#f1f5f9;padding:1.5px 6px;border:1px solid #cbd5e1;border-radius:3px;text-transform:uppercase;">TOTAL JARINGAN: ${cableLegendLengths.plannedMeters}M</span>
+          </div>
+          ${materialDipasangHtml}
+        </div>
+        <div style="width:225px;flex-shrink:0;border-right:1.5px solid #0f172a;padding:5px 8px;display:flex;flex-direction:column;justify-content:flex-start;gap:6px;">
+          <div>
+            <div style="font-size:8px;font-weight:800;color:#475569;text-transform:uppercase;">PEKERJAAN :</div>
+            <div style="font-weight:900;font-size:10px;text-transform:uppercase;line-height:1.3;margin-top:2px;">${judulGambar}</div>
+          </div>
+          <div style="border-top:1px solid #e2e8f0;padding-top:4px;font-size:9px;line-height:1.4;">
+            <div><strong>LOKASI:</strong> ${lokasiPekerjaan}</div>
+            <div><strong>KOORDINAT:</strong> ${tagingLokasi || '-'}</div>
+          </div>
+        </div>
+        <div style="width:255px;flex-shrink:0;padding:5px 8px;display:flex;flex-direction:column;justify-content:flex-start;gap:6px;font-size:9px;">
+          <div style="line-height:1.45;">
+            <div style="white-space:nowrap;"><span style="display:inline-block;width:104px;color:#334155;font-weight:700;">DIGAMBAR</span>: <strong>${(petugasSurvei || 'TIM SURVEI TEKNIK').toUpperCase()}</strong></div>
+            <div style="white-space:nowrap;"><span style="display:inline-block;width:104px;color:#334155;font-weight:700;">DIRENCANAKAN</span>: <strong>${(petugasSurvei || 'TIM SURVEI TEKNIK').toUpperCase()}</strong></div>
+            <div style="white-space:nowrap;"><span style="display:inline-block;width:104px;color:#334155;font-weight:700;">DIPERIKSA (TL)</span>: <strong>BAREP ARIYANTO</strong></div>
+            <div style="white-space:nowrap;"><span style="display:inline-block;width:104px;color:#334155;font-weight:700;">DISETUJUI (MANAJER)</span>: <strong>ARI MULYO TRANFIANTO</strong></div>
+          </div>
+          <div style="border-top:1px solid #e2e8f0;padding-top:4px;display:flex;justify-content:space-between;font-size:8.5px;color:#475569;font-weight:700;">
+            <span>NO. NODIN: ${item.noNodin || '-'}</span>
+            <span>TGL: ${formatDateDdMmYyyy(item.tglSurvei)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`
+      : ''
+  }
 </body>
 </html>`;
 
@@ -2147,9 +2658,10 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     const latSpan = Math.max(maxLat - minLat, 0.0001);
     const lngSpan = Math.max(maxLng - minLng, 0.0001);
 
-    // Auto-select optimal zoom level so poles span roughly 50-70% of canvas
+    // Auto-select optimal zoom level (up to z=20) so short 30m-40m spans have ample pixel separation (~200-270px) matching the GIS Canvas
+    const maxAutoZoom = 20;
     let autoZoom = 18;
-    for (let z = 19; z >= 14; z--) {
+    for (let z = maxAutoZoom; z >= 14; z--) {
       const pxX = (lngSpan / 360) * 256 * Math.pow(2, z);
       const rad1 = (minLat * Math.PI) / 180;
       const rad2 = (maxLat * Math.PI) / 180;
@@ -2166,13 +2678,13 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         256 *
         Math.pow(2, z);
       const pxY = Math.abs(py2 - py1);
-      if (pxX <= etiketWidth - 260 && pxY <= etiketHeight - 160) {
+      if (pxX <= etiketWidth - 240 && pxY <= etiketHeight - 140) {
         autoZoom = z;
         break;
       }
     }
 
-    const finalZoom = Math.max(14, Math.min(19, autoZoom + mapZoomOffset));
+    const finalZoom = Math.max(14, Math.min(20, autoZoom + mapZoomOffset));
 
     const centerWorldX =
       ((centerLng + 180) / 360) * 256 * Math.pow(2, finalZoom);
@@ -2185,7 +2697,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       256 *
       Math.pow(2, finalZoom);
 
-    // Tiles covering the 920 x 460 viewBox
+    // Tiles covering the 920 x 460 viewBox at native 1:1 resolution (no 2x label stretching)
     const leftWorldX = centerWorldX - etiketWidth / 2;
     const topWorldY = centerWorldY - etiketHeight / 2;
 
@@ -2201,19 +2713,24 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       y: number;
     }> = [];
 
+    const poiStyleSuffix = hideMapPoi
+      ? '&apistyle=s.t:2%7Cp.v:off,s.t:4%7Cp.v:off'
+      : '';
+
     if (mapBackgroundMode !== 'off') {
       for (let tx = minTileX; tx <= maxTileX; tx++) {
         for (let ty = minTileY; ty <= maxTileY; ty++) {
+          const sub = Math.abs(tx + ty) % 4;
           let url = '';
           if (mapBackgroundMode === 'osm') {
-            url = `https://tile.openstreetmap.org/${finalZoom}/${tx}/${ty}.png`;
+            url = `https://mt${sub}.google.com/vt/lyrs=m&x=${tx}&y=${ty}&z=${finalZoom}${poiStyleSuffix}`;
           } else if (mapBackgroundMode === 'voyager') {
-            url = `https://a.basemaps.cartocdn.com/rastertiles/voyager/${finalZoom}/${tx}/${ty}.png`;
+            url = `https://mt${sub}.google.com/vt/lyrs=p&x=${tx}&y=${ty}&z=${finalZoom}${poiStyleSuffix}`;
           } else if (mapBackgroundMode === 'satellite') {
-            url = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${finalZoom}/${ty}/${tx}`;
+            url = `https://mt${sub}.google.com/vt/lyrs=s&x=${tx}&y=${ty}&z=${finalZoom}`;
           }
           tiles.push({
-            key: `tile-${finalZoom}-${tx}-${ty}`,
+            key: `tile-${finalZoom}-${tx}-${ty}-${hideMapPoi ? 'nopoi' : 'poi'}`,
             url,
             x: Math.round(tx * 256 - leftWorldX),
             y: Math.round(ty * 256 - topWorldY),
@@ -2229,8 +2746,9 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       centerWorldX,
       centerWorldY,
       tiles,
+      googleStaticMapUrl: '',
     };
-  }, [nodes, tagingLokasi, mapBackgroundMode, mapZoomOffset]);
+  }, [nodes, tagingLokasi, mapBackgroundMode, mapZoomOffset, hideMapPoi]);
 
   const projectedNodes = useMemo(() => {
     if (nodes.length === 0) return [];
@@ -2256,6 +2774,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
         x,
         y,
         lines: formatPoleCalloutLines(n),
+        isBongkar: isNodeMarkedBongkar(n),
       };
     });
   }, [nodes, mercatorInfo]);
@@ -2318,19 +2837,23 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     };
   }, [spans]);
 
-  const etiketLayout = useMemo(
-    () =>
-      computeEtiketCalloutLayout({
-        nodes: projectedNodes,
-        spans: projectedSpans,
-        defaultMainRoadCenter: { x: etiketWidth / 2, y: etiketHeight / 2 + 44 },
-        defaultSimpangRoadCenter: { x: 185, y: etiketHeight - 40 },
-        showRoadSketch: false, // Uses real maps background
-      }),
-    [projectedNodes, projectedSpans]
-  );
+  const etiketLayout = useMemo(() => {
+    return computeEtiketCalloutLayout({
+      nodes: projectedNodes,
+      spans: projectedSpans,
+      defaultMainRoadCenter: { x: etiketWidth / 2, y: etiketHeight / 2 + 44 },
+      defaultSimpangRoadCenter: { x: 185, y: etiketHeight - 40 },
+      showRoadSketch: false, // Uses real maps background
+      legendRect: {
+        x: 0,
+        y: 0,
+        w: 0,
+        h: 0,
+      },
+    });
+  }, [projectedNodes, projectedSpans]);
 
-  // Pointer-event drag handlers for the Draggable Legend & Callouts in SVG
+  // Pointer-event drag handlers for the Draggable Callouts & Span Distance Badges in SVG
   const handleLegendPointerDown = (e: React.PointerEvent<SVGGElement>) => {
     e.stopPropagation();
     e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -2349,7 +2872,8 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   ) => {
     e.stopPropagation();
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    const existing = customCalloutOffsets[nodeId] || { dx: 0, dy: 0 };
+    const etiketKey = `etiket_${nodeId}`;
+    const existing = customCalloutOffsets[etiketKey] || { dx: 0, dy: 0 };
     calloutDragStart.current = {
       mouseX: e.clientX,
       mouseY: e.clientY,
@@ -2359,12 +2883,52 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     setDraggingCalloutNodeId(nodeId);
   };
 
+  const handleSchoorSvgPointerDown = (
+    e: React.PointerEvent<SVGGElement>,
+    nodeId: string,
+    schoorIdx: number,
+    centerX: number,
+    centerY: number
+  ) => {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    setDraggingSchoorOnSvg({ nodeId, schoorIdx, centerX, centerY });
+  };
+
   const handleSvgPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!svgRef.current) return;
-    if (!isDraggingLegend && !draggingCalloutNodeId) return;
+    if (!isDraggingLegend && !draggingCalloutNodeId && !draggingSchoorOnSvg)
+      return;
     const rect = svgRef.current.getBoundingClientRect();
     const scaleX = etiketWidth / (rect.width || 1);
     const scaleY = etiketHeight / (rect.height || 1);
+
+    if (draggingSchoorOnSvg) {
+      const mouseSvgX = (e.clientX - rect.left) * scaleX;
+      const mouseSvgY = (e.clientY - rect.top) * scaleY;
+      const deg = Math.round(
+        (Math.atan2(
+          mouseSvgY - draggingSchoorOnSvg.centerY,
+          mouseSvgX - draggingSchoorOnSvg.centerX
+        ) *
+          180) /
+          Math.PI
+      );
+      setNodes((prev) =>
+        prev.map((n) => {
+          if (n.id !== draggingSchoorOnSvg.nodeId) return n;
+          const sym = resolveNodeDrawingSymbol(n);
+          const nextAngles = [...sym.schoorAngleDegList];
+          nextAngles[draggingSchoorOnSvg.schoorIdx] = deg;
+          return {
+            ...n,
+            schoorAnglesDeg: nextAngles,
+            schoorAngleDeg: nextAngles[0] ?? deg,
+          };
+        })
+      );
+      return;
+    }
 
     if (isDraggingLegend) {
       const dx = (e.clientX - legendDragStart.current.mouseX) * scaleX;
@@ -2381,9 +2945,10 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
     } else if (draggingCalloutNodeId) {
       const dx = (e.clientX - calloutDragStart.current.mouseX) * scaleX;
       const dy = (e.clientY - calloutDragStart.current.mouseY) * scaleY;
+      const etiketKey = `etiket_${draggingCalloutNodeId}`;
       setCustomCalloutOffsets((prev) => ({
         ...prev,
-        [draggingCalloutNodeId]: {
+        [etiketKey]: {
           dx: Math.round(calloutDragStart.current.startDx + dx),
           dy: Math.round(calloutDragStart.current.startDy + dy),
         },
@@ -2392,6 +2957,9 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
   };
 
   const handleSvgPointerUp = () => {
+    if (draggingSchoorOnSvg) {
+      setDraggingSchoorOnSvg(null);
+    }
     if (isDraggingLegend) {
       setIsDraggingLegend(false);
     }
@@ -2402,6 +2970,339 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
   // Render SVG Etiket Drawing (shared between Tab 2 and Tab 4)
   const renderEtiketEngineeringSvg = () => {
+    const activeRows = getActiveLegendItems(nodes, spans);
+    const anyBaru = activeRows.some((r) => r.hasBaru);
+    const anyEksisting = activeRows.some((r) => r.hasEksisting);
+    const showBothCols = anyBaru && anyEksisting;
+
+    // Hitung rincian kuantitas material dan kabel untuk digabungkan ke Keterangan Gambar / Material Dipasang
+    let betonBaruCount = 0;
+    let betonEksCount = 0;
+    let besiBaruCount = 0;
+    let besiEksCount = 0;
+    const pkgTotals = new Map<string, number>();
+
+    nodes.forEach((n) => {
+      const isBkr = isNodeMarkedBongkar(n);
+      const sym = resolveNodeDrawingSymbol(n);
+      if (!sym.isGardu) {
+        if (sym.poleMaterial === 'BESI') {
+          if (sym.isPlanned) besiBaruCount += 1;
+          else besiEksCount += 1;
+        } else {
+          if (sym.isPlanned) betonBaruCount += 1;
+          else betonEksCount += 1;
+        }
+      }
+      if (!isBkr) {
+        (n.constructions || []).forEach((c) => {
+          if (c.actionType === 'BONGKAR') return;
+          const code = c.code.trim().toUpperCase();
+          if (!code) return;
+          pkgTotals.set(code, (pkgTotals.get(code) || 0) + (Number(c.qty) || 1));
+        });
+      }
+    });
+
+    const cableByLegendKey = new Map<string, Map<string, number>>();
+    const cableTotals = new Map<string, number>();
+    spans.forEach((sp) => {
+      const dist = Number(sp.distanceMeters) || 0;
+      getEffectiveSpanCables(sp).forEach((cb) => {
+        if (cb.actionType === 'BONGKAR') return;
+        const meters = dist * (cb.circuitCount || 1);
+        const cleanConductor = cb.conductorType.replace(/\s+3\s*Phase/i, '');
+        if (cb.statusJaringan === 'RENCANA') {
+          cableTotals.set(
+            cleanConductor,
+            (cableTotals.get(cleanConductor) || 0) + meters
+          );
+        }
+        const phaseCount = inferPhaseCountFromConductor(
+          cb.conductorType,
+          cb.phaseCount
+        );
+        const upperCond = cb.conductorType.toUpperCase();
+        let lKey = '';
+        if (upperCond.includes('VANG NET') || upperCond.includes('VANGNET')) {
+          lKey = 'VANG_NET';
+        } else if (upperCond.includes('MVTIC')) {
+          lKey = 'MVTIC';
+        } else if (cb.jenisJaringan === 'JTM') {
+          lKey = phaseCount === 1 ? 'JTM_1P' : 'JTM_3P';
+        } else if (cb.jenisJaringan === 'JTR' || cb.jenisJaringan === 'SR') {
+          lKey = phaseCount === 1 ? 'JTR_1P' : 'JTR_3P';
+        }
+        if (lKey) {
+          const subMap = cableByLegendKey.get(lKey) || new Map<string, number>();
+          subMap.set(cleanConductor, (subMap.get(cleanConductor) || 0) + meters);
+          cableByLegendKey.set(lKey, subMap);
+        }
+      });
+    });
+
+    const getRowMaterialDetail = (key: (typeof activeRows)[number]['key'], baseLabel: string) => {
+      if (key === 'TIANG_BETON') {
+        const parts: string[] = [];
+        if (betonBaruCount > 0) parts.push(`${betonBaruCount} Btg`);
+        if (betonEksCount > 0 && betonBaruCount === 0) parts.push(`${betonEksCount} Eks`);
+        return parts.length > 0 ? `${baseLabel} (${parts.join(', ')})` : baseLabel;
+      }
+      if (key === 'TIANG_BESI') {
+        const parts: string[] = [];
+        if (besiBaruCount > 0) parts.push(`${besiBaruCount} Btg`);
+        if (besiEksCount > 0 && besiBaruCount === 0) parts.push(`${besiEksCount} Eks`);
+        return parts.length > 0 ? `${baseLabel} (${parts.join(', ')})` : baseLabel;
+      }
+      const cMap = cableByLegendKey.get(key);
+      if (cMap && cMap.size > 0) {
+        const specs: string[] = [];
+        cMap.forEach((m, cond) => specs.push(`${cond}: ${m}m`));
+        return `${baseLabel} (${specs.join(', ')})`;
+      }
+      if (key === 'SCHOOR') {
+        const skurQty =
+          (pkgTotals.get('SE1-2') || 0) +
+          (pkgTotals.get('SE1-1') || 0) +
+          (pkgTotals.get('SKUR') || 0);
+        return skurQty > 0 ? `${baseLabel} (${skurQty} Set)` : baseLabel;
+      }
+      return baseLabel;
+    };
+
+    const renderInlineLegendSymbolSvg = (
+      key: (typeof activeRows)[number]['key'],
+      isBaru: boolean
+    ) => {
+      const col = isBaru ? '#dc2626' : '#0f172a';
+      const cx = 22;
+      return (
+        <svg
+          width="44"
+          height="14"
+          viewBox="0 0 44 14"
+          className="inline-block align-middle overflow-visible"
+        >
+          {key === 'TIANG_BETON' && (
+            <g transform={`translate(${cx}, 7)`}>
+              <circle r="4.5" fill="#fff" stroke={col} strokeWidth="1.3" />
+              <line x1="-3" y1="-3" x2="3" y2="3" stroke={col} strokeWidth="1.2" />
+              <line x1="-3" y1="3" x2="3" y2="-3" stroke={col} strokeWidth="1.2" />
+            </g>
+          )}
+          {key === 'TIANG_BESI' && (
+            <circle
+              cx={cx}
+              cy="7"
+              r="4.5"
+              fill={col}
+              stroke="#0f172a"
+              strokeWidth={isBaru ? '0.8' : '0'}
+            />
+          )}
+          {key === 'JTM_3P' && (
+            <line
+              x1={cx - 18}
+              y1="7"
+              x2={cx + 18}
+              y2="7"
+              stroke={col}
+              strokeWidth="2.6"
+            />
+          )}
+          {key === 'JTM_1P' && (
+            <line
+              x1={cx - 18}
+              y1="7"
+              x2={cx + 18}
+              y2="7"
+              stroke={col}
+              strokeWidth="2.6"
+              strokeDasharray="4,3"
+            />
+          )}
+          {key === 'JTR_1P' && (
+            <g>
+              <line
+                x1={cx - 18}
+                y1="7"
+                x2={cx + 18}
+                y2="7"
+                stroke={col}
+                strokeWidth="1.6"
+              />
+              {[-2.8, 0, 2.8].map((dx, idx) => (
+                <line
+                  key={idx}
+                  x1={cx + dx - 1.5}
+                  y1="10.5"
+                  x2={cx + dx + 1.5}
+                  y2="3.5"
+                  stroke={col}
+                  strokeWidth="1.2"
+                  strokeLinecap="round"
+                />
+              ))}
+            </g>
+          )}
+          {key === 'JTR_3P' && (
+            <g>
+              <line
+                x1={cx - 18}
+                y1="7"
+                x2={cx + 18}
+                y2="7"
+                stroke={col}
+                strokeWidth="1.6"
+              />
+              {[-4.2, -1.4, 1.4, 4.2].map((dx, idx) => (
+                <line
+                  key={idx}
+                  x1={cx + dx - 1.5}
+                  y1="10.5"
+                  x2={cx + dx + 1.5}
+                  y2="3.5"
+                  stroke={col}
+                  strokeWidth="1.2"
+                  strokeLinecap="round"
+                />
+              ))}
+            </g>
+          )}
+          {key === 'TRAFO_1P' && (
+            <polygon
+              points={`${cx},2 ${cx - 6},11 ${cx + 6},11`}
+              fill={col}
+              stroke="#0f172a"
+              strokeWidth={isBaru ? '0.7' : '0'}
+            />
+          )}
+          {key === 'TRAFO_3P' && (
+            <g>
+              <polygon
+                points={`${cx - 5},3 ${cx - 10},11 ${cx},11`}
+                fill={col}
+                stroke="#0f172a"
+                strokeWidth={isBaru ? '0.6' : '0'}
+              />
+              <polygon
+                points={`${cx},3 ${cx - 5},11 ${cx + 5},11`}
+                fill={col}
+                stroke="#0f172a"
+                strokeWidth={isBaru ? '0.6' : '0'}
+              />
+              <polygon
+                points={`${cx + 5},3 ${cx},11 ${cx + 10},11`}
+                fill={col}
+                stroke="#0f172a"
+                strokeWidth={isBaru ? '0.6' : '0'}
+              />
+            </g>
+          )}
+          {key === 'FCO' && (
+            <g>
+              <text
+                x={cx}
+                y="11"
+                fontSize="8.5"
+                fontWeight="900"
+                textAnchor="middle"
+                fill={col}
+              >
+                S
+              </text>
+              <line
+                x1={cx - 4}
+                y1="12"
+                x2={cx + 4}
+                y2="2"
+                stroke={col}
+                strokeWidth="1.2"
+              />
+            </g>
+          )}
+          {key === 'ABSW' && (
+            <g>
+              <line
+                x1={cx - 16}
+                y1="7"
+                x2={cx - 3}
+                y2="7"
+                stroke={col}
+                strokeWidth="1.4"
+              />
+              <line
+                x1={cx - 3}
+                y1="3"
+                x2={cx - 3}
+                y2="11"
+                stroke={col}
+                strokeWidth="1.4"
+              />
+              <line
+                x1={cx + 2}
+                y1="3"
+                x2={cx + 2}
+                y2="11"
+                stroke={col}
+                strokeWidth="1.4"
+              />
+              <line
+                x1={cx + 2}
+                y1="7"
+                x2={cx + 15}
+                y2="7"
+                stroke={col}
+                strokeWidth="1.4"
+              />
+            </g>
+          )}
+          {key === 'VANG_NET' && (
+            <line
+              x1={cx - 18}
+              y1="7"
+              x2={cx + 18}
+              y2="7"
+              stroke="#0284c7"
+              strokeWidth="2"
+            />
+          )}
+          {key === 'SCHOOR' && (
+            <g>
+              <line
+                x1={cx - 10}
+                y1="11"
+                x2={cx + 7}
+                y2="4"
+                stroke={col}
+                strokeWidth="1.6"
+              />
+              <polygon
+                points={`${cx + 9},3 ${cx + 3},3 ${cx + 6},8`}
+                fill={col}
+              />
+            </g>
+          )}
+          {key === 'MVTIC' && (
+            <line
+              x1={cx - 18}
+              y1="7"
+              x2={cx + 18}
+              y2="7"
+              stroke={col}
+              strokeWidth="1.8"
+              strokeDasharray="6,2.5,1.5,2.5,1.5,2.5"
+            />
+          )}
+        </svg>
+      );
+    };
+
+    const pkgSummaryParts: string[] = [];
+    pkgTotals.forEach((qty, code) => {
+      pkgSummaryParts.push(`${code}: ${qty}`);
+    });
+
     return (
       <div className="border-2 border-slate-900 bg-white text-slate-900 shadow-sm overflow-hidden relative">
         <svg
@@ -2428,7 +3329,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             </pattern>
           </defs>
 
-          {/* Real Map Tiles Layer (OpenStreetMap / CartoDB / ESRI Satellite) */}
+          {/* Real Map Layer (Google Maps Static API + Esri World Street/Topo/Satellite Fallback) */}
           {mapBackgroundMode !== 'off' && mercatorInfo.tiles.length > 0 && (
             <g id="svg-map-tiles" opacity={mapBackgroundOpacity}>
               {mercatorInfo.tiles.map((tile) => (
@@ -2442,6 +3343,20 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                   preserveAspectRatio="none"
                 />
               ))}
+              {mercatorInfo.googleStaticMapUrl && (
+                <image
+                  href={mercatorInfo.googleStaticMapUrl}
+                  x={0}
+                  y={0}
+                  width={etiketWidth}
+                  height={etiketHeight}
+                  preserveAspectRatio="none"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                    window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
+                  }}
+                />
+              )}
             </g>
           )}
 
@@ -2515,15 +3430,11 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             const len = Math.hypot(dx, dy) || 1;
             const nx = -dy / len;
             const ny = dx / len;
-            const spanBongkar = isSpanMarkedBongkar(span);
-            const badgePos = etiketLayout.spanBadges.find(
-              (b) => b.id === span.id
-            );
 
             return (
               <g key={span.id}>
                 {cables.map((cable, cIdx) => {
-                  const offsetPx = (cIdx - (cables.length - 1) / 2) * 3.8;
+                  const offsetPx = (cIdx - (cables.length - 1) / 2) * 6.5;
                   const x1 = pFrom.x + nx * offsetPx;
                   const y1 = pFrom.y + ny * offsetPx;
                   const x2 = pTo.x + nx * offsetPx;
@@ -2539,15 +3450,32 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                     phaseCount
                   );
                   const cableBongkar = isCableMarkedBongkar(cable, span);
-                  const tickRatio = getStaggeredPhaseTickRatio(
+                  const rawTickRatio = getStaggeredPhaseTickRatio(
                     cIdx,
                     cables.length
+                  );
+                  // Ensure phase slashes never touch the pole circles (minimum 20px clearance from pole centers when span allows)
+                  const minClearRatio =
+                    len > 44 ? Math.min(0.38, 22 / len) : 0.45;
+                  const safeTickRatio = Math.max(
+                    minClearRatio,
+                    Math.min(1 - minClearRatio, rawTickRatio)
                   );
                   const phaseSlash = getPhaseSlashSymbol(
                     phaseCount,
                     cable.jenisJaringan,
                     cable.conductorType
                   );
+                  let spanAngleDeg =
+                    (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+                  if (spanAngleDeg > 90) spanAngleDeg -= 180;
+                  if (spanAngleDeg < -90) spanAngleDeg += 180;
+                  const tickX = x1 + (x2 - x1) * safeTickRatio;
+                  const tickY = y1 + (y2 - y1) * safeTickRatio;
+                  const slashCount = phaseSlash ? phaseSlash.length : 0;
+                  const slashSpacing = 2.7;
+                  const slashStartOffset =
+                    -((slashCount - 1) * slashSpacing) / 2;
 
                   return (
                     <g key={cable.id || cIdx}>
@@ -2560,17 +3488,26 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                         strokeWidth={vis.weight}
                         strokeDasharray={vis.dashArray}
                       />
-                      {phaseSlash && (
-                        <text
-                          x={x1 + (x2 - x1) * tickRatio}
-                          y={y1 + (y2 - y1) * tickRatio + 3.5}
-                          textAnchor="middle"
-                          fontSize="9"
-                          fontWeight="900"
-                          fill={vis.strokeColor}
+                      {slashCount > 0 && len >= 24 && (
+                        <g
+                          transform={`translate(${tickX.toFixed(1)}, ${tickY.toFixed(1)}) rotate(${spanAngleDeg.toFixed(1)})`}
                         >
-                          {phaseSlash}
-                        </text>
+                          {Array.from({ length: slashCount }).map((_, sIdx) => {
+                            const sx = slashStartOffset + sIdx * slashSpacing;
+                            return (
+                              <line
+                                key={sIdx}
+                                x1={sx - 1.4}
+                                y1={3.6}
+                                x2={sx + 1.4}
+                                y2={-3.6}
+                                stroke={vis.strokeColor}
+                                strokeWidth="1.35"
+                                strokeLinecap="round"
+                              />
+                            );
+                          })}
+                        </g>
                       )}
                       {cableBongkar && (
                         <text
@@ -2587,36 +3524,82 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                     </g>
                   );
                 })}
-
-                {badgePos && (
-                  <g>
-                    <rect
-                      x={badgePos.boxX}
-                      y={badgePos.boxY}
-                      width={badgePos.badgeW}
-                      height={badgePos.badgeH}
-                      rx="4"
-                      fill="#ffffff"
-                      stroke={spanBongkar ? '#dc2626' : '#334155'}
-                      strokeWidth="1"
-                    />
-                    <text
-                      x={badgePos.centerX}
-                      y={badgePos.centerY + 3}
-                      textAnchor="middle"
-                      fontSize="8.5"
-                      fontWeight="800"
-                      fill={spanBongkar ? '#dc2626' : '#0f172a'}
-                    >
-                      {span.distanceMeters}m
-                    </text>
-                  </g>
-                )}
               </g>
             );
           })}
 
-          {/* Callout Leader Lines & Draggable Callout Boxes */}
+          {/* Draggable Span Distance Badges (Tanda Jarak Kabel Fleksibel & Sinkron dengan Peta GIS) */}
+          {spans.map((span) => {
+            const pFrom = projectedNodes.find((p) => p.id === span.fromNodeId);
+            const pTo = projectedNodes.find((p) => p.id === span.toNodeId);
+            if (!pFrom || !pTo) return null;
+            const badgePos = etiketLayout.spanBadges.find(
+              (b) => b.id === span.id
+            );
+            if (!badgePos) return null;
+            const spanBongkar = isSpanMarkedBongkar(span);
+            const midX = (pFrom.x + pTo.x) / 2;
+            const midY = (pFrom.y + pTo.y) / 2;
+            const etiketSpanOffset =
+              customCalloutOffsets[`etiket_span_${span.id}`];
+            const mapSpanOffset = customCalloutOffsets[`map_span_${span.id}`];
+            const baseCenterX = mapSpanOffset
+              ? midX + mapSpanOffset.dx
+              : badgePos.centerX;
+            const baseCenterY = mapSpanOffset
+              ? midY + mapSpanOffset.dy
+              : badgePos.centerY;
+            const centerX = baseCenterX + (etiketSpanOffset?.dx || 0);
+            const centerY = baseCenterY + (etiketSpanOffset?.dy || 0);
+            const boxX = centerX - badgePos.badgeW / 2;
+            const boxY = centerY - badgePos.badgeH / 2;
+            const distFromMid = Math.hypot(centerX - midX, centerY - midY);
+
+            return (
+              <g
+                key={`span-badge-${span.id}`}
+                onPointerDown={(ev) =>
+                  handleCalloutPointerDown(ev, `span_${span.id}`)
+                }
+                style={{ cursor: 'grab' }}
+              >
+                {distFromMid > 12 && (
+                  <line
+                    x1={midX}
+                    y1={midY}
+                    x2={centerX}
+                    y2={centerY}
+                    stroke={spanBongkar ? '#dc2626' : '#475569'}
+                    strokeWidth="1"
+                    strokeDasharray="2,2"
+                  />
+                )}
+                <rect
+                  x={boxX}
+                  y={boxY}
+                  width={badgePos.badgeW}
+                  height={badgePos.badgeH}
+                  rx="4"
+                  fill="#ffffff"
+                  fillOpacity="0.96"
+                  stroke={spanBongkar ? '#dc2626' : '#334155'}
+                  strokeWidth="1.1"
+                />
+                <text
+                  x={centerX}
+                  y={centerY + 3}
+                  textAnchor="middle"
+                  fontSize="8.5"
+                  fontWeight="800"
+                  fill={spanBongkar ? '#dc2626' : '#0f172a'}
+                >
+                  {span.distanceMeters}m
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Callout Leader Lines & Draggable Callout Boxes (Sinkron dengan Posisi di Peta GIS) */}
           {etiketLayout.nodePlacements.map((cl) => {
             const pNode = projectedNodes.find((p) => p.id === cl.id);
             if (!pNode) return null;
@@ -2625,11 +3608,24 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               pNode.kind === 'GARDU_RENCANA' ||
               pNode.kind === 'TITIK_APP';
             const nodeBongkar = isNodeMarkedBongkar(pNode.node);
-            const customOffset = customCalloutOffsets[cl.id] || { dx: 0, dy: 0 };
-            const boxX = cl.boxX + customOffset.dx;
-            const boxY = cl.boxY + customOffset.dy;
-            const anchorX = cl.anchorX + customOffset.dx;
-            const anchorY = cl.anchorY + customOffset.dy;
+            const etiketCustomOffset = customCalloutOffsets[`etiket_${cl.id}`];
+            const mapCustomOffset = customCalloutOffsets[cl.id];
+            const baseBoxX = mapCustomOffset
+              ? cl.pt.x + mapCustomOffset.dx - cl.boxWidth / 2
+              : cl.boxX;
+            const baseBoxY = mapCustomOffset
+              ? cl.pt.y + mapCustomOffset.dy - cl.boxHeight / 2
+              : cl.boxY;
+            const boxX = baseBoxX + (etiketCustomOffset?.dx || 0);
+            const boxY = baseBoxY + (etiketCustomOffset?.dy || 0);
+            const anchorX = Math.max(
+              boxX,
+              Math.min(cl.pt.x, boxX + cl.boxWidth)
+            );
+            const anchorY = Math.max(
+              boxY,
+              Math.min(cl.pt.y, boxY + cl.boxHeight)
+            );
 
             return (
               <g
@@ -2690,10 +3686,27 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
             return (
               <g key={node.id} transform={`translate(${x}, ${y})`}>
-                {/* No 12. Schoor (Panah Miring ↗ Sesuai Arah Tarikan Skur - Mendukung Multiple Set) */}
+                {/* No 12. Schoor (Panah Miring ↗ Sesuai Arah Tarikan Skur - Bisa Diputar Langsung di Canvas) */}
                 {hasSchoor &&
                   sym.schoorAngleDegList.map((angle, sIdx) => (
-                    <g key={sIdx} transform={`rotate(${angle})`}>
+                    <g
+                      key={sIdx}
+                      transform={`rotate(${angle})`}
+                      onPointerDown={(ev) =>
+                        handleSchoorSvgPointerDown(ev, node.id, sIdx, x, y)
+                      }
+                      style={{ cursor: 'grab' }}
+                    >
+                      <title>Tahan &amp; putar untuk mengubah arah tarikan Skur (SE1-2)</title>
+                      <line
+                        x1="5"
+                        y1="0"
+                        x2="24"
+                        y2="0"
+                        stroke="transparent"
+                        strokeWidth="12"
+                        strokeLinecap="round"
+                      />
                       <line x1="7" y1="0" x2="21" y2="0" stroke={color} strokeWidth="1.8" />
                       <polygon points="23,0 16,-3.8 16,3.8" fill={color} />
                     </g>
@@ -2822,529 +3835,169 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               </g>
             );
           })}
-
-          {/* Draggable Dynamic "Keterangan Gambar :" Table (Hanya menampilkan simbol yang ada di kanvas) */}
-          {(() => {
-            const activeRows = getActiveLegendItems(nodes, spans);
-            const anyBaru = activeRows.some((r) => r.hasBaru);
-            const anyEksisting = activeRows.some((r) => r.hasEksisting);
-            const showBothCols = anyBaru && anyEksisting;
-            const tableWidth = showBothCols ? 222 : 178;
-            const rowHeight = 16;
-            const tableHeight = 33 + Math.max(1, activeRows.length) * rowHeight + 4;
-
-            const renderLegendSymbol = (
-              key: (typeof activeRows)[number]['key'],
-              cx: number,
-              isBaru: boolean
-            ) => {
-              const col = isBaru ? '#dc2626' : '#0f172a';
-              switch (key) {
-                case 'TIANG_BETON':
-                  return (
-                    <g transform={`translate(${cx}, 8)`}>
-                      <circle r="4.5" fill="#fff" stroke={col} strokeWidth="1.3" />
-                      <line x1="-3" y1="-3" x2="3" y2="3" stroke={col} strokeWidth="1.2" />
-                      <line x1="-3" y1="3" x2="3" y2="-3" stroke={col} strokeWidth="1.2" />
-                    </g>
-                  );
-                case 'TIANG_BESI':
-                  return (
-                    <circle
-                      cx={cx}
-                      cy="8"
-                      r="4.5"
-                      fill={col}
-                      stroke="#0f172a"
-                      strokeWidth={isBaru ? '0.8' : '0'}
-                    />
-                  );
-                case 'JTM_3P':
-                  return (
-                    <line
-                      x1={cx - 19}
-                      y1="8"
-                      x2={cx + 19}
-                      y2="8"
-                      stroke={col}
-                      strokeWidth="1.8"
-                    />
-                  );
-                case 'JTM_1P':
-                  return (
-                    <line
-                      x1={cx - 19}
-                      y1="8"
-                      x2={cx + 19}
-                      y2="8"
-                      stroke={col}
-                      strokeWidth="1.8"
-                      strokeDasharray="4,3"
-                    />
-                  );
-                case 'JTR_1P':
-                  return (
-                    <g>
-                      <line
-                        x1={cx - 19}
-                        y1="8"
-                        x2={cx + 19}
-                        y2="8"
-                        stroke={col}
-                        strokeWidth="1.6"
-                      />
-                      <text
-                        x={cx}
-                        y="11"
-                        fontSize="7.5"
-                        fontWeight="900"
-                        textAnchor="middle"
-                        fill={col}
-                      >
-                        ///
-                      </text>
-                    </g>
-                  );
-                case 'JTR_3P':
-                  return (
-                    <g>
-                      <line
-                        x1={cx - 19}
-                        y1="8"
-                        x2={cx + 19}
-                        y2="8"
-                        stroke={col}
-                        strokeWidth="1.6"
-                      />
-                      <text
-                        x={cx}
-                        y="11"
-                        fontSize="7.5"
-                        fontWeight="900"
-                        textAnchor="middle"
-                        fill={col}
-                      >
-                        ////
-                      </text>
-                    </g>
-                  );
-                case 'TRAFO_1P':
-                  return (
-                    <polygon
-                      points={`${cx},3 ${cx - 6},12 ${cx + 6},12`}
-                      fill={col}
-                      stroke="#0f172a"
-                      strokeWidth={isBaru ? '0.7' : '0'}
-                    />
-                  );
-                case 'TRAFO_3P':
-                  return (
-                    <g>
-                      <polygon
-                        points={`${cx - 5},4 ${cx - 10},12 ${cx},12`}
-                        fill={col}
-                        stroke="#0f172a"
-                        strokeWidth={isBaru ? '0.6' : '0'}
-                      />
-                      <polygon
-                        points={`${cx},4 ${cx - 5},12 ${cx + 5},12`}
-                        fill={col}
-                        stroke="#0f172a"
-                        strokeWidth={isBaru ? '0.6' : '0'}
-                      />
-                      <polygon
-                        points={`${cx + 5},4 ${cx},12 ${cx + 10},12`}
-                        fill={col}
-                        stroke="#0f172a"
-                        strokeWidth={isBaru ? '0.6' : '0'}
-                      />
-                    </g>
-                  );
-                case 'FCO':
-                  return (
-                    <g>
-                      <text
-                        x={cx}
-                        y="12"
-                        fontSize="8.5"
-                        fontWeight="900"
-                        textAnchor="middle"
-                        fill={col}
-                      >
-                        S
-                      </text>
-                      <line
-                        x1={cx - 4}
-                        y1="13"
-                        x2={cx + 4}
-                        y2="3"
-                        stroke={col}
-                        strokeWidth="1.2"
-                      />
-                    </g>
-                  );
-                case 'ABSW':
-                  return (
-                    <g>
-                      <line
-                        x1={cx - 16}
-                        y1="8"
-                        x2={cx - 3}
-                        y2="8"
-                        stroke={col}
-                        strokeWidth="1.4"
-                      />
-                      <line
-                        x1={cx - 3}
-                        y1="4"
-                        x2={cx - 3}
-                        y2="12"
-                        stroke={col}
-                        strokeWidth="1.4"
-                      />
-                      <line
-                        x1={cx + 2}
-                        y1="4"
-                        x2={cx + 2}
-                        y2="12"
-                        stroke={col}
-                        strokeWidth="1.4"
-                      />
-                      <line
-                        x1={cx + 2}
-                        y1="8"
-                        x2={cx + 15}
-                        y2="8"
-                        stroke={col}
-                        strokeWidth="1.4"
-                      />
-                    </g>
-                  );
-                case 'VANG_NET':
-                  return (
-                    <line
-                      x1={cx - 19}
-                      y1="8"
-                      x2={cx + 19}
-                      y2="8"
-                      stroke="#0284c7"
-                      strokeWidth="2"
-                    />
-                  );
-                case 'SCHOOR':
-                  return (
-                    <g>
-                      <line
-                        x1={cx - 10}
-                        y1="12"
-                        x2={cx + 7}
-                        y2="5"
-                        stroke={col}
-                        strokeWidth="1.6"
-                      />
-                      <polygon
-                        points={`${cx + 9},4 ${cx + 3},4 ${cx + 6},9`}
-                        fill={col}
-                      />
-                    </g>
-                  );
-                case 'MVTIC':
-                  return (
-                    <line
-                      x1={cx - 19}
-                      y1="9"
-                      x2={cx + 19}
-                      y2="9"
-                      stroke={col}
-                      strokeWidth="1.8"
-                      strokeDasharray="6,2.5,1.5,2.5,1.5,2.5"
-                    />
-                  );
-              }
-            };
-
-            return (
-              <g
-                id="draggable-etiket-legend"
-                transform={`translate(${legendPos.x}, ${legendPos.y})`}
-                onPointerDown={handleLegendPointerDown}
-                style={{ cursor: isDraggingLegend ? 'grabbing' : 'move' }}
-                className="select-none"
-              >
-                <rect
-                  width={tableWidth}
-                  height={tableHeight}
-                  rx="4"
-                  fill="#ffffff"
-                  fillOpacity="0.97"
-                  stroke="#0f172a"
-                  strokeWidth="1.4"
-                />
-                <rect width={tableWidth} height="19" rx="3" fill="#0f172a" />
-                <text x="7" y="13" fontSize="7.6" fontWeight="900" fill="#ffffff">
-                  ✥ Keterangan Gambar : ({cableLegendLengths.plannedMeters}m)
-                </text>
-
-                {/* Table Column Headers */}
-                <rect
-                  x="0"
-                  y="19"
-                  width={tableWidth}
-                  height="14"
-                  fill="#f1f5f9"
-                  stroke="#0f172a"
-                  strokeWidth="0.7"
-                />
-                <text
-                  x="11"
-                  y="29"
-                  fontSize="7"
-                  fontWeight="800"
-                  textAnchor="middle"
-                  fill="#0f172a"
-                >
-                  No
-                </text>
-                <text
-                  x="72"
-                  y="29"
-                  fontSize="7"
-                  fontWeight="800"
-                  textAnchor="middle"
-                  fill="#0f172a"
-                >
-                  Nama Material
-                </text>
-                {showBothCols ? (
-                  <>
-                    <text
-                      x="150"
-                      y="29"
-                      fontSize="7"
-                      fontWeight="800"
-                      textAnchor="middle"
-                      fill="#dc2626"
-                    >
-                      Baru
-                    </text>
-                    <text
-                      x="196"
-                      y="29"
-                      fontSize="7"
-                      fontWeight="800"
-                      textAnchor="middle"
-                      fill="#0f172a"
-                    >
-                      Eksisting
-                    </text>
-                    <line
-                      x1="22"
-                      y1="19"
-                      x2="22"
-                      y2={tableHeight}
-                      stroke="#cbd5e1"
-                      strokeWidth="0.7"
-                    />
-                    <line
-                      x1="124"
-                      y1="19"
-                      x2="124"
-                      y2={tableHeight}
-                      stroke="#cbd5e1"
-                      strokeWidth="0.7"
-                    />
-                    <line
-                      x1="174"
-                      y1="19"
-                      x2="174"
-                      y2={tableHeight}
-                      stroke="#cbd5e1"
-                      strokeWidth="0.7"
-                    />
-                  </>
-                ) : (
-                  <>
-                    <text
-                      x="151"
-                      y="29"
-                      fontSize="7"
-                      fontWeight="800"
-                      textAnchor="middle"
-                      fill={anyBaru ? '#dc2626' : '#0f172a'}
-                    >
-                      {anyBaru ? 'Baru' : 'Eksisting'}
-                    </text>
-                    <line
-                      x1="22"
-                      y1="19"
-                      x2="22"
-                      y2={tableHeight}
-                      stroke="#cbd5e1"
-                      strokeWidth="0.7"
-                    />
-                    <line
-                      x1="124"
-                      y1="19"
-                      x2="124"
-                      y2={tableHeight}
-                      stroke="#cbd5e1"
-                      strokeWidth="0.7"
-                    />
-                  </>
-                )}
-
-                {activeRows.length === 0 ? (
-                  <g transform="translate(0, 33)">
-                    <text
-                      x={tableWidth / 2}
-                      y="11"
-                      fontSize="6.8"
-                      fontWeight="700"
-                      textAnchor="middle"
-                      fill="#64748b"
-                    >
-                      Belum ada objek di kanvas
-                    </text>
-                  </g>
-                ) : (
-                  activeRows.map((row, rIdx) => {
-                    const rowY = 33 + rIdx * rowHeight;
-                    return (
-                      <g key={row.key} transform={`translate(0, ${rowY})`}>
-                        {rIdx < activeRows.length - 1 && (
-                          <line
-                            x1="0"
-                            y1={rowHeight}
-                            x2={tableWidth}
-                            y2={rowHeight}
-                            stroke="#e2e8f0"
-                            strokeWidth="0.6"
-                          />
-                        )}
-                        <text
-                          x="11"
-                          y="11"
-                          fontSize="6.8"
-                          fontWeight="700"
-                          textAnchor="middle"
-                          fill="#0f172a"
-                        >
-                          {row.no}
-                        </text>
-                        <text
-                          x="26"
-                          y="11"
-                          fontSize="6.6"
-                          fontWeight="700"
-                          fill="#0f172a"
-                        >
-                          {row.label}
-                        </text>
-                        {showBothCols ? (
-                          <>
-                            {row.hasBaru && renderLegendSymbol(row.key, 150, true)}
-                            {row.hasEksisting &&
-                              renderLegendSymbol(row.key, 196, false)}
-                          </>
-                        ) : (
-                          renderLegendSymbol(
-                            row.key,
-                            151,
-                            anyBaru ? row.hasBaru : false
-                          )
-                        )}
-                      </g>
-                    );
-                  })
-                )}
-              </g>
-            );
-          })()}
         </svg>
 
-        {/* Formal PLN Engineering Etiket Title Block */}
-        <div className="border-t-2 border-slate-900 grid grid-cols-12 text-[11px] bg-white">
-          <div className="col-span-3 border-r border-slate-900 p-2.5 flex flex-col justify-between">
-            <div>
-              <p className="font-black text-slate-900 uppercase tracking-tight">
-                PT. PLN (PERSERO) UID JAWA TENGAH &amp; DIY
-              </p>
-              <p className="font-bold text-slate-700 text-[10px]">
-                UP3 MAGELANG — ULP BOROBUDUR
-              </p>
+        {/* Formal PLN Engineering Etiket Title Block (Padat, Proporsional & Tanpa Ruang Kosong) */}
+        <div className="border-t-2 border-slate-900 flex flex-wrap md:flex-nowrap items-stretch text-[11px] bg-white">
+          {/* Kotak 1: Unit PLN + Keterangan Gambar & Material Dipasang (Full Width di Kolom Kiri) */}
+          <div className="min-w-[280px] flex-[1.45] border-r border-slate-900 p-2 flex flex-col justify-start gap-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-1">
+              <div className="flex items-center gap-2">
+                <div
+                  className="shrink-0"
+                  dangerouslySetInnerHTML={{
+                    __html: buildOfficialPlnLogoSvg(24, 24),
+                  }}
+                />
+                <div>
+                  <p className="font-black text-slate-900 uppercase tracking-tight text-[10.5px] leading-tight">
+                    PT. PLN (PERSERO) UID JAWA TENGAH &amp; DIY
+                  </p>
+                  <p className="font-bold text-slate-700 text-[9px] leading-tight">
+                    UP3 MAGELANG — ULP BOROBUDUR
+                  </p>
+                </div>
+              </div>
+              <span className="text-[9px] font-extrabold uppercase text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-300">
+                Total Jaringan: {cableLegendLengths.plannedMeters}m
+              </span>
             </div>
-            <div className="mt-2 pt-1.5 border-t border-slate-200 text-[9.5px] text-slate-600 space-y-0.5">
-              {getActiveLegendItems(nodes, spans).some((r) => r.hasBaru) && (
-                <div className="flex items-center gap-2">
-                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-600" />
-                  <span>Merah = Tiang / Kabel Rencana</span>
+
+            <div className="w-full border border-slate-800 rounded-sm overflow-hidden bg-white">
+              <div className="bg-slate-900 text-white px-2 py-0.5 text-[8.5px] font-extrabold uppercase tracking-wide flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  Keterangan Gambar &amp; Material Dipasang ({cableLegendLengths.plannedMeters}m)
+                </span>
+                {pkgSummaryParts.length > 0 && (
+                  <span className="text-[8px] font-bold text-amber-300">
+                    Konstruksi: {pkgSummaryParts.join(' • ')}
+                  </span>
+                )}
+              </div>
+              {activeRows.length === 0 ? (
+                <div className="px-2.5 py-1.5 text-[9px] text-slate-400 italic">
+                  Belum ada objek / material di kanvas
                 </div>
-              )}
-              {getActiveLegendItems(nodes, spans).some((r) => r.hasEksisting) && (
-                <div className="flex items-center gap-2">
-                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-900" />
-                  <span>Hitam = Tiang / Kabel Eksisting</span>
-                </div>
-              )}
-              {(nodes.some((n) => isNodeMarkedBongkar(n)) ||
-                spans.some((s) => isSpanMarkedBongkar(s))) && (
-                <div className="flex items-center gap-2">
-                  <span className="font-black text-red-600">✕</span>
-                  <span>Silang Merah = Konstruksi Dibongkar</span>
-                </div>
+              ) : (
+                <table className="w-full border-collapse text-[9px]">
+                  <thead>
+                    <tr className="bg-slate-100 border-b border-slate-300 text-slate-800 font-extrabold">
+                      <th className="px-1.5 py-0.5 w-7 text-center border-r border-slate-300">
+                        No
+                      </th>
+                      <th className="px-2 py-0.5 text-left border-r border-slate-300">
+                        Nama Material / Jaringan
+                      </th>
+                      {showBothCols ? (
+                        <>
+                          <th className="px-2 py-0.5 w-16 text-center text-red-600 border-r border-slate-300">
+                            Baru
+                          </th>
+                          <th className="px-2 py-0.5 w-16 text-center text-slate-900">
+                            Eksisting
+                          </th>
+                        </>
+                      ) : (
+                        <th
+                          className={`px-2 py-0.5 w-20 text-center ${
+                            anyBaru ? 'text-red-600' : 'text-slate-900'
+                          }`}
+                        >
+                          {anyBaru ? 'Baru' : 'Eksisting'}
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeRows.map((row) => (
+                      <tr
+                        key={row.key}
+                        className="border-b last:border-b-0 border-slate-200"
+                      >
+                        <td className="px-1.5 py-0.5 text-center font-bold text-slate-800 border-r border-slate-200">
+                          {row.no}
+                        </td>
+                        <td className="px-2 py-0.5 font-bold text-slate-900 border-r border-slate-200">
+                          {getRowMaterialDetail(row.key, row.label)}
+                        </td>
+                        {showBothCols ? (
+                          <>
+                            <td className="px-1.5 py-0.5 text-center border-r border-slate-200">
+                              {row.hasBaru &&
+                                renderInlineLegendSymbolSvg(row.key, true)}
+                            </td>
+                            <td className="px-1.5 py-0.5 text-center">
+                              {row.hasEksisting &&
+                                renderInlineLegendSymbolSvg(row.key, false)}
+                            </td>
+                          </>
+                        ) : (
+                          <td className="px-1.5 py-0.5 text-center">
+                            {renderInlineLegendSymbolSvg(
+                              row.key,
+                              anyBaru ? row.hasBaru : false
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
           </div>
 
-          <div className="col-span-5 border-r border-slate-900 p-2.5 flex flex-col justify-between">
+          {/* Kotak 2: Pekerjaan, Lokasi & Koordinat (Padat Tanpa Ruang Kosong) */}
+          <div className="w-fit min-w-[210px] max-w-[250px] shrink-0 border-r border-slate-900 p-2 flex flex-col justify-start gap-2">
             <div>
-              <p className="text-[9px] font-bold uppercase text-slate-500">
+              <p className="text-[8.5px] font-extrabold uppercase text-slate-500">
                 PEKERJAAN :
               </p>
-              <p className="font-black text-slate-900 uppercase leading-snug">
+              <p className="font-black text-slate-900 uppercase leading-snug break-words text-[10.5px]">
                 {judulGambar}
               </p>
             </div>
-            <div className="mt-2 pt-1.5 border-t border-slate-200 flex items-center justify-between text-[10px]">
-              <span>
+            <div className="pt-1.5 border-t border-slate-200 flex flex-col gap-0.5 text-[9.5px]">
+              <div>
                 <strong>LOKASI:</strong> {lokasiPekerjaan}
-              </span>
-              <span>
+              </div>
+              <div className="whitespace-nowrap">
                 <strong>KOORDINAT:</strong> {tagingLokasi || '-'}
-              </span>
+              </div>
             </div>
           </div>
 
-          <div className="col-span-4 p-2 border-l border-slate-900 flex flex-col justify-between text-[10px]">
-            <div className="space-y-1.5 font-bold">
-              <div className="flex items-center">
-                <span className="w-28 text-slate-700">DIGAMBAR</span>
-                <span className="w-3 text-slate-700">:</span>
-                <span className="font-extrabold text-slate-900 truncate uppercase">
+          {/* Kotak 3: Pengesahan & Pemeriksa (Padat & Satu Baris Rapi) */}
+          <div className="w-fit min-w-[260px] shrink-0 p-2 flex flex-col justify-start gap-2 text-[9.5px]">
+            <div className="space-y-0.5 font-bold">
+              <div className="flex items-center whitespace-nowrap">
+                <span className="w-32 shrink-0 text-slate-700">DIGAMBAR</span>
+                <span className="w-2.5 shrink-0 text-slate-700">:</span>
+                <span className="font-extrabold text-slate-900 uppercase">
                   {petugasSurvei || 'TIM SURVEI TEKNIK'}
                 </span>
               </div>
-              <div className="flex items-center">
-                <span className="w-28 text-slate-700">DIRENCANAKAN</span>
-                <span className="w-3 text-slate-700">:</span>
-                <span className="font-extrabold text-slate-900 truncate uppercase">
+              <div className="flex items-center whitespace-nowrap">
+                <span className="w-32 shrink-0 text-slate-700">DIRENCANAKAN</span>
+                <span className="w-2.5 shrink-0 text-slate-700">:</span>
+                <span className="font-extrabold text-slate-900 uppercase">
                   {petugasSurvei || 'TIM SURVEI TEKNIK'}
                 </span>
               </div>
-              <div className="flex items-center">
-                <span className="w-28 text-slate-700">DIPERIKSA (TL)</span>
-                <span className="w-3 text-slate-700">:</span>
+              <div className="flex items-center whitespace-nowrap">
+                <span className="w-32 shrink-0 text-slate-700">DIPERIKSA (TL)</span>
+                <span className="w-2.5 shrink-0 text-slate-700">:</span>
                 <span className="font-black text-slate-900 uppercase">BAREP ARIYANTO</span>
               </div>
-              <div className="flex items-center">
-                <span className="w-28 text-slate-700">DISETUJUI (MANAJER)</span>
-                <span className="w-3 text-slate-700">:</span>
+              <div className="flex items-center whitespace-nowrap">
+                <span className="w-32 shrink-0 text-slate-700">DISETUJUI (MANAJER)</span>
+                <span className="w-2.5 shrink-0 text-slate-700">:</span>
                 <span className="font-black text-slate-900 uppercase">ARI MULYO TRANFIANTO</span>
               </div>
             </div>
-            <div className="pt-1.5 mt-1 border-t border-slate-200 flex items-center justify-between text-[9px] text-slate-500 font-bold">
+            <div className="pt-1.5 border-t border-slate-200 flex items-center justify-between gap-3 text-[9px] text-slate-600 font-bold">
               <span>NO. NODIN: {item.noNodin || '-'}</span>
-              <span>SKALA: NTS</span>
+              <span>TGL: {formatDateDdMmYyyy(item.tglSurvei)}</span>
             </div>
           </div>
         </div>
@@ -3365,27 +4018,37 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
     return (
       <div className="border-2 border-slate-900 bg-white text-slate-900 rounded-sm overflow-hidden shadow-sm">
-        {/* Formal PLN Top Header */}
+        {/* Formal PLN Top Header sesuai Contoh Format RAB Resmi PLN */}
         <div className="p-4 border-b-2 border-slate-900">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
+          <div className="flex items-center gap-3">
+            <div
+              className="shrink-0"
+              dangerouslySetInnerHTML={{
+                __html: buildOfficialPlnLogoSvg(40, 40),
+              }}
+            />
+            <div className="leading-tight">
               <p className="text-xs font-black tracking-wide uppercase text-slate-900">
-                PT. PLN (PERSERO) UID JAWA TENGAH &amp; DIY
+                PT. PLN ( PERSERO )
               </p>
-              <p className="text-[11px] font-bold text-slate-700">
+              <p className="text-xs font-black uppercase underline text-slate-900">
+                UNIT INDUK DISTRIBUSI JAWA TENGAH &amp; DIY
+              </p>
+              <p className="text-[10.5px] font-bold text-slate-700">
                 UP3 MAGELANG — ULP BOROBUDUR
               </p>
             </div>
-            <div className="text-right">
-              <span className="inline-block px-2.5 py-1 bg-slate-900 text-white text-[11px] font-black uppercase tracking-wider">
-                RENCANA ANGGARAN BIAYA (RAB)
-              </span>
-            </div>
           </div>
 
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+          <div className="text-center my-2.5">
+            <h4 className="text-sm font-black uppercase tracking-wider underline text-slate-950">
+              RENCANA ANGGARAN BIAYA (RAB)
+            </h4>
+          </div>
+
+          <div className="mt-2 space-y-1 text-xs max-w-2xl">
             <div className="flex items-center gap-2">
-              <span className="w-24 font-bold text-slate-600 uppercase">
+              <span className="w-28 font-bold text-slate-700">
                 Pekerjaan
               </span>
               <span>:</span>
@@ -3403,25 +4066,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               )}
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-24 font-bold text-slate-600 uppercase">
-                Pelaksana
-              </span>
-              <span>:</span>
-              {readOnly ? (
-                <span className="font-bold text-slate-900">
-                  {pelaksanaPekerjaan}
-                </span>
-              ) : (
-                <input
-                  type="text"
-                  value={pelaksanaPekerjaan}
-                  onChange={(e) => setPelaksanaPekerjaan(e.target.value)}
-                  className="flex-1 border-b border-slate-300 focus:border-indigo-600 outline-none font-bold px-1 py-0.5"
-                />
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-24 font-bold text-slate-600 uppercase">
+              <span className="w-28 font-bold text-slate-700">
                 Lokasi
               </span>
               <span>:</span>
@@ -3439,30 +4084,58 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               )}
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-24 font-bold text-slate-600 uppercase">
-                Anggaran / PRK
+              <span className="w-28 font-bold text-slate-700">
+                Pelaksana
               </span>
               <span>:</span>
               {readOnly ? (
                 <span className="font-bold text-slate-900">
-                  {jenisAnggaran} ({nomorPrk})
+                  {pelaksanaPekerjaan}
                 </span>
               ) : (
-                <div className="flex-1 flex items-center gap-1">
-                  <input
-                    type="text"
-                    value={jenisAnggaran}
-                    onChange={(e) => setJenisAnggaran(e.target.value)}
-                    className="w-1/2 border-b border-slate-300 focus:border-indigo-600 outline-none font-bold px-1 py-0.5"
-                  />
-                  <input
-                    type="text"
-                    value={nomorPrk}
-                    onChange={(e) => setNomorPrk(e.target.value)}
-                    placeholder="No. PRK"
-                    className="w-1/2 border-b border-slate-300 focus:border-indigo-600 outline-none font-bold px-1 py-0.5"
-                  />
-                </div>
+                <input
+                  type="text"
+                  value={pelaksanaPekerjaan}
+                  onChange={(e) => setPelaksanaPekerjaan(e.target.value)}
+                  className="flex-1 border-b border-slate-300 focus:border-indigo-600 outline-none font-bold px-1 py-0.5"
+                />
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-28 font-bold text-slate-700">
+                Anggaran
+              </span>
+              <span>:</span>
+              {readOnly ? (
+                <span className="font-bold text-slate-900">
+                  {jenisAnggaran}
+                </span>
+              ) : (
+                <input
+                  type="text"
+                  value={jenisAnggaran}
+                  onChange={(e) => setJenisAnggaran(e.target.value)}
+                  className="flex-1 border-b border-slate-300 focus:border-indigo-600 outline-none font-bold px-1 py-0.5"
+                />
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-28 font-bold text-slate-700">
+                Nomor PRK
+              </span>
+              <span>:</span>
+              {readOnly ? (
+                <span className="font-bold text-slate-900">
+                  {nomorPrk || '-'}
+                </span>
+              ) : (
+                <input
+                  type="text"
+                  value={nomorPrk}
+                  onChange={(e) => setNomorPrk(e.target.value)}
+                  placeholder="No. PRK"
+                  className="flex-1 border-b border-slate-300 focus:border-indigo-600 outline-none font-bold px-1 py-0.5"
+                />
               )}
             </div>
           </div>
@@ -4284,7 +4957,7 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
 
                 <span className="h-3.5 w-px bg-slate-700 mx-0.5" />
 
-                {/* 6. Satelit, Layar Penuh & Lipat Toolbar */}
+                {/* 6. Satelit, Sembunyikan POI, Layar Penuh & Lipat Toolbar */}
                 <button
                   type="button"
                   onClick={() =>
@@ -4297,6 +4970,19 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
                 >
                   <Layers className="w-3 h-3 text-cyan-400" />
                   {tileLayerMode === 'street' ? 'Satelit' : 'Peta'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setHideMapPoi((prev) => !prev)}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer border ${
+                    hideMapPoi
+                      ? 'bg-emerald-950/90 text-emerald-300 border-emerald-700/70 hover:bg-emerald-900'
+                      : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                  }`}
+                  title="Sembunyikan/Tampilkan ikon & nama tempat komersial (hotel, warung, toko) agar gambar jaringan bersih"
+                >
+                  <span>{hideMapPoi ? '🧹 POI: Bersih' : '🏪 POI: Tampil'}</span>
                 </button>
 
                 <button
@@ -5007,43 +5693,30 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               )}
             </div>
 
-            {/* Right: Draggable Legend Quick-Positioning */}
+            {/* Right: Clean Map POI Toggle & Callout Auto-Tidy */}
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="font-extrabold text-slate-700 flex items-center gap-1 text-[11px]">
-                <Move className="w-3.5 h-3.5 text-amber-600" />
-                Posisi Legenda:
-              </span>
               <button
                 type="button"
-                onClick={() => setLegendPos({ x: 26, y: 26 })}
-                className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] border border-slate-300 cursor-pointer"
-                title="Pindah Legenda ke Kiri Atas"
+                onClick={() => setHideMapPoi((prev) => !prev)}
+                className={`px-2.5 py-1 rounded font-bold text-[10px] border cursor-pointer transition ${
+                  hideMapPoi
+                    ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                }`}
+                title="Sembunyikan ikon & nama tempat komersial (hotel, warung, restoran) agar peta hanya menampilkan jalan & jaringan secara profesional"
               >
-                ↖ Kiri Atas
+                {hideMapPoi
+                  ? '🧹 Nama Tempat/POI: Bersih (Jalan Saja)'
+                  : '🏪 Nama Tempat/POI: Tampil Semua'}
               </button>
+
               <button
                 type="button"
-                onClick={() => setLegendPos({ x: etiketWidth - 215, y: 26 })}
-                className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] border border-slate-300 cursor-pointer"
-                title="Pindah Legenda ke Kanan Atas"
+                onClick={() => setCustomCalloutOffsets({})}
+                className="px-2 py-1 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[10px] border border-amber-300 cursor-pointer"
+                title="Rapikan otomatis posisi seluruh kotak keterangan titik agar bebas tumpang tindih"
               >
-                ↗ Kanan Atas
-              </button>
-              <button
-                type="button"
-                onClick={() => setLegendPos({ x: 26, y: etiketHeight - 165 })}
-                className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] border border-slate-300 cursor-pointer"
-                title="Pindah Legenda ke Kiri Bawah"
-              >
-                ↙ Kiri Bawah
-              </button>
-              <button
-                type="button"
-                onClick={() => setLegendPos({ x: etiketWidth - 215, y: etiketHeight - 165 })}
-                className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] border border-slate-300 cursor-pointer"
-                title="Pindah Legenda ke Kanan Bawah"
-              >
-                ↘ Kanan Bawah
+                ✨ Rapikan Label Titik
               </button>
 
               <button
@@ -5280,7 +5953,86 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
       {/* ===================================================================== */}
       {viewTab === 'pdf3hal' && (() => {
         const totalSuratPages = Math.max(1, attachedSuratPages.length);
-        const totalBundelPages = totalSuratPages + 2;
+
+        // Flatten and paginate RAB rows into A4 Portrait pages (210mm x 297mm)
+        type FlatPreviewRabEntry =
+          | { kind: 'SECTION_HEADER'; code: string; title: string }
+          | { kind: 'PACKAGE_HEADER'; row: RabLineItem }
+          | { kind: 'LINE_ITEM'; row: RabLineItem; seq: number };
+
+        const flatRabEntries: FlatPreviewRabEntry[] = [];
+        groupedRabSections.forEach((sec) => {
+          if (sec.items.length === 0) return;
+          let itemSeq = 0;
+          flatRabEntries.push({
+            kind: 'SECTION_HEADER',
+            code: sec.code,
+            title: sec.title,
+          });
+          sec.items.forEach((row) => {
+            if (row.isPackageHeader) {
+              itemSeq = 0;
+              flatRabEntries.push({ kind: 'PACKAGE_HEADER', row });
+            } else {
+              itemSeq += 1;
+              flatRabEntries.push({
+                kind: 'LINE_ITEM',
+                row,
+                seq: row.itemNo ?? itemSeq,
+              });
+            }
+          });
+        });
+
+        const rabA4PageChunks: FlatPreviewRabEntry[][] = [];
+        if (flatRabEntries.length <= 20) {
+          rabA4PageChunks.push(flatRabEntries);
+        } else {
+          let cursor = 0;
+          while (cursor < flatRabEntries.length) {
+            const isFirst = rabA4PageChunks.length === 0;
+            const maxRows = isFirst ? 25 : 30;
+            let endIdx = Math.min(cursor + maxRows, flatRabEntries.length);
+            if (endIdx < flatRabEntries.length) {
+              while (
+                endIdx > cursor + 4 &&
+                (flatRabEntries[endIdx - 1].kind === 'SECTION_HEADER' ||
+                  flatRabEntries[endIdx - 1].kind === 'PACKAGE_HEADER')
+              ) {
+                endIdx -= 1;
+              }
+            }
+            rabA4PageChunks.push(flatRabEntries.slice(cursor, endIdx));
+            cursor = endIdx;
+          }
+          const lastChunk = rabA4PageChunks[rabA4PageChunks.length - 1];
+          if (lastChunk && lastChunk.length > 22) {
+            let splitAt = 22;
+            while (
+              splitAt > 6 &&
+              (lastChunk[splitAt - 1].kind === 'SECTION_HEADER' ||
+                lastChunk[splitAt - 1].kind === 'PACKAGE_HEADER')
+            ) {
+              splitAt -= 1;
+            }
+            rabA4PageChunks[rabA4PageChunks.length - 1] = lastChunk.slice(
+              0,
+              splitAt
+            );
+            rabA4PageChunks.push(lastChunk.slice(splitAt));
+          }
+        }
+
+        const totalRabPages = Math.max(1, rabA4PageChunks.length);
+        const totalBundelPages = totalSuratPages + totalRabPages + 1;
+        const ppnMduDoc = Math.round(rabSummary.subTotalMdu * (ppnPercent / 100));
+        const ppnHardwareDoc = Math.round(
+          rabSummary.subTotalHardware * (ppnPercent / 100)
+        );
+        const ppnJasaDoc = Math.round(rabSummary.subTotalJasa * (ppnPercent / 100));
+        const totalMduDoc = rabSummary.subTotalMdu + ppnMduDoc;
+        const totalHardwareDoc = rabSummary.subTotalHardware + ppnHardwareDoc;
+        const totalJasaDoc = rabSummary.subTotalJasa + ppnJasaDoc;
 
         return (
           <div className="space-y-6 bg-slate-100 p-4 rounded-xl border border-slate-300">
@@ -5288,13 +6040,15 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm">
               <div>
                 <h5 className="text-sm font-extrabold text-slate-900">
-                  Bundel Dokumen Permohonan, RAB &amp; Gambar Sketsa ({totalBundelPages} Halaman Dinamis)
+                  Bundel Dokumen Permohonan, RAB A4 &amp; Gambar Sketsa ({totalBundelPages} Halaman Dinamis)
                 </h5>
                 <p className="text-xs text-slate-600 mt-0.5">
                   Halaman 1{totalSuratPages > 1 ? ` s/d ${totalSuratPages}` : ''}:{' '}
-                  <strong>Surat Permohonan ({totalSuratPages} Halaman)</strong> • Halaman {totalSuratPages + 1}:{' '}
-                  <strong>Tabel RAB Resmi PLN</strong> • Halaman {totalSuratPages + 2}:{' '}
-                  <strong>Gambar Sketsa Ber-Etiket PLN</strong>
+                  <strong>Surat Permohonan ({totalSuratPages} Hal)</strong> • Halaman{' '}
+                  {totalSuratPages + 1}
+                  {totalRabPages > 1 ? ` s/d ${totalSuratPages + totalRabPages}` : ''}:{' '}
+                  <strong>Tabel RAB Resmi PLN Ukuran A4 ({totalRabPages} Hal)</strong> • Halaman{' '}
+                  {totalBundelPages}: <strong>Gambar Sketsa Landscape A4</strong>
                 </p>
               </div>
 
@@ -5602,26 +6356,478 @@ export const TeknikSurveyRabStudio: React.FC<TeknikSurveyRabStudioProps> = ({
               );
             })}
 
-            {/* HALAMAN totalSuratPages + 1: TABEL RENCANA ANGGARAN BIAYA (RAB) RESMI PLN */}
-            <div className="bg-white border-2 border-slate-900 p-6 rounded-sm shadow-sm space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-300 pb-2">
-                <span className="px-2 py-0.5 bg-slate-900 text-white text-[10px] font-black uppercase">
-                  HALAMAN {totalSuratPages + 1} / {totalBundelPages} — RENCANA ANGGARAN BIAYA (RAB) RESMI PLN
-                </span>
-                <span className="text-xs font-extrabold text-slate-900">
-                  Total RAB (+PPN {ppnPercent}%): Rp{' '}
-                  {rabSummary.grandTotal.toLocaleString('id-ID')}
-                </span>
-              </div>
-              {renderOfficialRabTable(readOnly)}
-            </div>
+            {/* HALAMAN RAB RESMI PLN UKURAN A4 PORTRAIT (OTOMATIS HALAMAN BARU JIKA LEBIH DARI 1 HALAMAN A4) */}
+            {rabA4PageChunks.map((chunkEntries, rPageIdx) => {
+              const bundlePageNum = totalSuratPages + rPageIdx + 1;
+              const isFirstRabPage = rPageIdx === 0;
+              const isLastRabPage = rPageIdx === rabA4PageChunks.length - 1;
 
-            {/* HALAMAN totalSuratPages + 2: GAMBAR SKETSA SURVEI BER-ETIKET PLN */}
+              return (
+                <div
+                  key={`rab-a4-page-${rPageIdx}`}
+                  className="w-full max-w-[210mm] min-h-[297mm] mx-auto bg-white border-2 border-slate-900 p-6 rounded-sm shadow-sm flex flex-col justify-between space-y-3"
+                >
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-300 pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 bg-slate-900 text-white text-[10px] font-black uppercase">
+                          HALAMAN {bundlePageNum} / {totalBundelPages} — RENCANA ANGGARAN BIAYA (RAB) RESMI PLN
+                          {totalRabPages > 1
+                            ? ` (LEMBAR ${rPageIdx + 1} DARI ${totalRabPages})`
+                            : ''}
+                        </span>
+                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded text-[10px] font-extrabold uppercase">
+                          Ukuran A4 Portrait (210 × 297 mm)
+                        </span>
+                      </div>
+                      <span className="text-xs font-extrabold text-slate-900">
+                        Total RAB (+PPN {ppnPercent}%): Rp{' '}
+                        {rabSummary.grandTotal.toLocaleString('id-ID')}
+                      </span>
+                    </div>
+
+                    <div className="border-2 border-slate-900 bg-white text-slate-900 rounded-sm overflow-hidden">
+                      {/* Header Resmi PT PLN (Persero) */}
+                      <div className="p-3.5 border-b-2 border-slate-900">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="shrink-0"
+                              dangerouslySetInnerHTML={{
+                                __html: buildOfficialPlnLogoSvg(40, 40),
+                              }}
+                            />
+                            <div className="leading-tight">
+                              <p className="text-xs font-black tracking-wide uppercase text-slate-900">
+                                PT. PLN ( PERSERO )
+                              </p>
+                              <p className="text-xs font-black uppercase underline text-slate-900">
+                                UNIT INDUK DISTRIBUSI JAWA TENGAH &amp; DIY
+                              </p>
+                              <p className="text-[10.5px] font-bold text-slate-700">
+                                UP3 MAGELANG — ULP BOROBUDUR
+                              </p>
+                            </div>
+                          </div>
+                          {totalRabPages > 1 && (
+                            <span className="text-[10px] font-extrabold text-slate-700 bg-slate-100 border border-slate-300 px-2 py-0.5 rounded">
+                              Lembar {rPageIdx + 1} / {totalRabPages}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="text-center my-2">
+                          <h4 className="text-sm font-black uppercase tracking-wider underline text-slate-950">
+                            RENCANA ANGGARAN BIAYA (RAB)
+                            {!isFirstRabPage
+                              ? ` — LANJUTAN LEMBAR ${rPageIdx + 1}`
+                              : ''}
+                          </h4>
+                        </div>
+
+                        {isFirstRabPage ? (
+                          <div className="mt-2 space-y-0.5 text-[11px] max-w-2xl">
+                            <div className="flex items-center gap-2">
+                              <span className="w-24 font-bold text-slate-700">
+                                Pekerjaan
+                              </span>
+                              <span>:</span>
+                              <span className="font-extrabold text-slate-900">
+                                {judulGambar}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-24 font-bold text-slate-700">
+                                Lokasi
+                              </span>
+                              <span>:</span>
+                              <span className="font-bold text-slate-900">
+                                {lokasiPekerjaan}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-24 font-bold text-slate-700">
+                                Pelaksana
+                              </span>
+                              <span>:</span>
+                              <span className="font-bold text-slate-900">
+                                {pelaksanaPekerjaan}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-24 font-bold text-slate-700">
+                                Anggaran
+                              </span>
+                              <span>:</span>
+                              <span className="font-bold text-slate-900">
+                                {jenisAnggaran}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-24 font-bold text-slate-700">
+                                Nomor PRK
+                              </span>
+                              <span>:</span>
+                              <span className="font-bold text-slate-900">
+                                {nomorPrk || '-'}
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[10.5px] bg-slate-50 px-2.5 py-1 rounded border border-slate-200">
+                            <span>
+                              <strong>Pekerjaan:</strong> {judulGambar}
+                            </span>
+                            <span>
+                              <strong>Lokasi:</strong> {lokasiPekerjaan}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Tabel 10 Kolom RAB untuk Halaman A4 Ini */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-[10.5px] border-collapse">
+                          <thead>
+                            <tr className="bg-slate-900 text-white font-bold uppercase text-center">
+                              <th
+                                rowSpan={2}
+                                className="border border-slate-700 px-1.5 py-1.5 w-8"
+                              >
+                                NO
+                              </th>
+                              <th
+                                rowSpan={2}
+                                className="border border-slate-700 px-2.5 py-1.5 text-left"
+                              >
+                                URAIAN
+                              </th>
+                              <th
+                                rowSpan={2}
+                                className="border border-slate-700 px-1.5 py-1.5 w-11"
+                              >
+                                GOL
+                              </th>
+                              <th
+                                rowSpan={2}
+                                className="border border-slate-700 px-1.5 py-1.5 w-11"
+                              >
+                                SAT
+                              </th>
+                              <th
+                                rowSpan={2}
+                                className="border border-slate-700 px-1.5 py-1.5 w-12"
+                              >
+                                VOL
+                              </th>
+                              <th
+                                rowSpan={2}
+                                className="border border-slate-700 px-2 py-1.5 text-right w-24"
+                              >
+                                HARGA SATUAN
+                              </th>
+                              <th
+                                colSpan={4}
+                                className="border border-slate-700 px-2 py-1 text-center bg-indigo-950"
+                              >
+                                BIAYA YANG DIPERLUKAN ( RP )
+                              </th>
+                            </tr>
+                            <tr className="bg-slate-800 text-white font-bold uppercase text-right">
+                              <th className="border border-slate-700 px-2 py-1 w-24">
+                                MDU
+                              </th>
+                              <th className="border border-slate-700 px-2 py-1 w-24">
+                                HARDWARE
+                              </th>
+                              <th className="border border-slate-700 px-2 py-1 w-24">
+                                JASA
+                              </th>
+                              <th className="border border-slate-700 px-2 py-1 w-28 bg-slate-900">
+                                JUMLAH
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {chunkEntries.length === 0 ? (
+                              <tr>
+                                <td
+                                  colSpan={10}
+                                  className="border border-slate-300 px-4 py-8 text-center text-slate-500 font-medium"
+                                >
+                                  Tabel RAB masih kosong. Tambahkan tiang/konstruksi pada Peta GIS.
+                                </td>
+                              </tr>
+                            ) : (
+                              chunkEntries.map((entry, eIdx) => {
+                                if (entry.kind === 'SECTION_HEADER') {
+                                  return (
+                                    <tr
+                                      key={`sec-${entry.code}-${eIdx}`}
+                                      className="bg-slate-100 font-black text-slate-900"
+                                    >
+                                      <td className="border border-slate-300 px-1.5 py-1 text-center">
+                                        {entry.code}
+                                      </td>
+                                      <td
+                                        colSpan={9}
+                                        className="border border-slate-300 px-2.5 py-1 uppercase tracking-wide"
+                                      >
+                                        {entry.title}
+                                      </td>
+                                    </tr>
+                                  );
+                                }
+                                if (entry.kind === 'PACKAGE_HEADER') {
+                                  const row = entry.row;
+                                  const pkgCodeUpper = (
+                                    row.parentPackageCode ||
+                                    row.uraian ||
+                                    ''
+                                  ).toUpperCase();
+                                  const pkgDef =
+                                    CONSTRUCTION_PACKAGES_CATALOG.find(
+                                      (p) =>
+                                        p.code.toUpperCase() === pkgCodeUpper
+                                    );
+                                  return (
+                                    <tr
+                                      key={row.id}
+                                      className="bg-amber-100/70 font-extrabold text-slate-900 border-t border-b border-amber-300"
+                                    >
+                                      <td className="border border-slate-300 px-1.5 py-1 text-center text-amber-900 font-black">
+                                        +
+                                      </td>
+                                      <td className="border border-slate-300 px-2.5 py-1">
+                                        <span className="px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 font-black text-[10px] font-mono mr-1.5">
+                                          {row.uraian}
+                                        </span>
+                                        <span className="font-bold text-slate-900">
+                                          {pkgDef?.name || 'Paket Konstruksi'}
+                                        </span>
+                                      </td>
+                                      <td className="border border-slate-300 px-1.5 py-1 text-center text-slate-400">
+                                        -
+                                      </td>
+                                      <td className="border border-slate-300 px-1.5 py-1 text-center font-bold">
+                                        {row.satuan || 'Unit'}
+                                      </td>
+                                      <td className="border border-slate-300 px-1.5 py-1 text-center font-mono font-black text-amber-900">
+                                        {row.volume}
+                                      </td>
+                                      <td className="border border-slate-300 px-2 py-1 text-right text-slate-400">
+                                        -
+                                      </td>
+                                      <td className="border border-slate-300 px-2 py-1 text-right text-slate-400">
+                                        -
+                                      </td>
+                                      <td className="border border-slate-300 px-2 py-1 text-right text-slate-400">
+                                        -
+                                      </td>
+                                      <td className="border border-slate-300 px-2 py-1 text-right text-slate-400">
+                                        -
+                                      </td>
+                                      <td className="border border-slate-300 px-2 py-1 text-right text-slate-400">
+                                        -
+                                      </td>
+                                    </tr>
+                                  );
+                                }
+
+                                const { row, seq } = entry;
+                                const brk = calculateRabRowBreakdown(row);
+                                const isChild = Boolean(
+                                  row.parentPackageCode || row.parentHeaderId
+                                );
+
+                                return (
+                                  <tr
+                                    key={row.id}
+                                    className={`${
+                                      isChild ? 'bg-amber-50/25' : ''
+                                    } text-slate-800`}
+                                  >
+                                    <td className="border border-slate-300 px-1.5 py-1 text-center font-mono text-slate-500">
+                                      {seq}
+                                    </td>
+                                    <td
+                                      className={`border border-slate-300 py-1 ${
+                                        isChild ? 'pl-5 pr-2' : 'px-2.5'
+                                      } font-medium`}
+                                    >
+                                      {isChild ? `↳ ${row.uraian}` : row.uraian}
+                                    </td>
+                                    <td className="border border-slate-300 px-1.5 py-1 text-center font-bold text-slate-600">
+                                      {row.gol}
+                                    </td>
+                                    <td className="border border-slate-300 px-1.5 py-1 text-center">
+                                      {row.satuan}
+                                    </td>
+                                    <td className="border border-slate-300 px-1.5 py-1 text-center font-mono font-bold">
+                                      {row.volume}
+                                    </td>
+                                    <td className="border border-slate-300 px-2 py-1 text-right font-mono">
+                                      {row.hargaSatuan.toLocaleString('id-ID')}
+                                    </td>
+                                    <td className="border border-slate-300 px-2 py-1 text-right font-mono">
+                                      {brk.mdu > 0
+                                        ? brk.mdu.toLocaleString('id-ID')
+                                        : '0'}
+                                    </td>
+                                    <td className="border border-slate-300 px-2 py-1 text-right font-mono">
+                                      {brk.hardware > 0
+                                        ? brk.hardware.toLocaleString('id-ID')
+                                        : '0'}
+                                    </td>
+                                    <td className="border border-slate-300 px-2 py-1 text-right font-mono">
+                                      {brk.jasa > 0
+                                        ? brk.jasa.toLocaleString('id-ID')
+                                        : '0'}
+                                    </td>
+                                    <td className="border border-slate-300 px-2 py-1 text-right font-mono font-bold text-slate-900 bg-slate-50/70">
+                                      {brk.jumlah.toLocaleString('id-ID')}
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+
+                          {isLastRabPage && (
+                            <tfoot>
+                              <tr className="bg-slate-100 font-bold text-slate-900">
+                                <td
+                                  colSpan={6}
+                                  className="border border-slate-400 px-2.5 py-1.5 text-right uppercase"
+                                >
+                                  Jumlah MDU - Hardware - Jasa
+                                </td>
+                                <td className="border border-slate-400 px-2 py-1.5 text-right font-mono">
+                                  {rabSummary.subTotalMdu.toLocaleString('id-ID')}
+                                </td>
+                                <td className="border border-slate-400 px-2 py-1.5 text-right font-mono">
+                                  {rabSummary.subTotalHardware.toLocaleString(
+                                    'id-ID'
+                                  )}
+                                </td>
+                                <td className="border border-slate-400 px-2 py-1.5 text-right font-mono">
+                                  {rabSummary.subTotalJasa.toLocaleString('id-ID')}
+                                </td>
+                                <td className="border border-slate-400 px-2 py-1.5 text-right font-mono font-extrabold">
+                                  {rabSummary.subTotalJumlah.toLocaleString(
+                                    'id-ID'
+                                  )}
+                                </td>
+                              </tr>
+                              <tr className="bg-slate-100 font-bold text-slate-900">
+                                <td
+                                  colSpan={6}
+                                  className="border border-slate-400 px-2.5 py-1.5 text-right uppercase"
+                                >
+                                  PPN {ppnPercent}%
+                                </td>
+                                <td className="border border-slate-400 px-2 py-1.5 text-right font-mono">
+                                  {ppnMduDoc.toLocaleString('id-ID')}
+                                </td>
+                                <td className="border border-slate-400 px-2 py-1.5 text-right font-mono">
+                                  {ppnHardwareDoc.toLocaleString('id-ID')}
+                                </td>
+                                <td className="border border-slate-400 px-2 py-1.5 text-right font-mono">
+                                  {ppnJasaDoc.toLocaleString('id-ID')}
+                                </td>
+                                <td className="border border-slate-400 px-2 py-1.5 text-right font-mono font-extrabold">
+                                  {rabSummary.ppnAmount.toLocaleString('id-ID')}
+                                </td>
+                              </tr>
+                              <tr className="bg-slate-900 text-white font-black">
+                                <td
+                                  colSpan={6}
+                                  className="border border-slate-700 px-2.5 py-1.5 text-right uppercase tracking-wide"
+                                >
+                                  Jumlah Total (Rp)
+                                </td>
+                                <td className="border border-slate-700 px-2 py-1.5 text-right font-mono">
+                                  {totalMduDoc.toLocaleString('id-ID')}
+                                </td>
+                                <td className="border border-slate-700 px-2 py-1.5 text-right font-mono">
+                                  {totalHardwareDoc.toLocaleString('id-ID')}
+                                </td>
+                                <td className="border border-slate-700 px-2 py-1.5 text-right font-mono">
+                                  {totalJasaDoc.toLocaleString('id-ID')}
+                                </td>
+                                <td className="border border-slate-700 px-2 py-1.5 text-right font-mono text-amber-300">
+                                  Rp {rabSummary.grandTotal.toLocaleString('id-ID')}
+                                </td>
+                              </tr>
+                              <tr className="bg-amber-50 border-t border-slate-400">
+                                <td
+                                  colSpan={10}
+                                  className="px-2.5 py-1.5 text-[11px] font-extrabold italic text-slate-900"
+                                >
+                                  Terbilang : {rabSummary.terbilang}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          )}
+                        </table>
+                      </div>
+
+                      {isLastRabPage ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 p-3.5 bg-white border-t-2 border-slate-900 text-xs text-slate-900">
+                          <div className="border border-slate-300 rounded-lg p-3 text-center space-y-10">
+                            <div>
+                              <p className="text-[11px] text-slate-600">
+                                Mengetahui / Setuju Dilaksanakan,
+                              </p>
+                              <p className="font-black uppercase tracking-wide text-slate-900">
+                                MANAJER ULP BOROBUDUR
+                              </p>
+                            </div>
+                            <div className="pt-2 border-t border-slate-300">
+                              <p className="font-extrabold underline uppercase text-slate-900">
+                                ( ARI MULYO TRANFIANTO )
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="border border-slate-300 rounded-lg p-3 text-center space-y-10">
+                            <div>
+                              <p className="text-[11px] text-slate-600">
+                                Borobudur, {formatDateDdMmYyyy(item.tglSurvei)} • Diperiksa Oleh,
+                              </p>
+                              <p className="font-black uppercase tracking-wide text-slate-900">
+                                TL TEKNIK
+                              </p>
+                            </div>
+                            <div className="pt-2 border-t border-slate-300">
+                              <p className="font-extrabold underline uppercase text-slate-900">
+                                ( BAREP ARIYANTO )
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="px-3.5 py-2 bg-slate-50 border-t border-slate-300 text-right text-[11px] font-bold italic text-slate-600">
+                          Bersambung ke Halaman RAB berikutnya (Lembar {rPageIdx + 2} dari {totalRabPages})...
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* HALAMAN TERAKHIR: GAMBAR SKETSA SURVEI BER-ETIKET PLN (KHUSUS LANDSCAPE) */}
             <div className="bg-white border-2 border-slate-900 p-6 rounded-sm shadow-sm space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-300 pb-2">
-                <span className="px-2 py-0.5 bg-slate-900 text-white text-[10px] font-black uppercase">
-                  HALAMAN {totalSuratPages + 2} / {totalBundelPages} — GAMBAR SKETSA SURVEI BER-ETIKET PLN (BACKGROUND MAPS)
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-300 pb-2">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 bg-slate-900 text-white text-[10px] font-black uppercase">
+                    HALAMAN {totalBundelPages} / {totalBundelPages} — GAMBAR SKETSA SURVEI BER-ETIKET PLN (BACKGROUND MAPS)
+                  </span>
+                  <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 border border-indigo-300 rounded text-[10px] font-extrabold uppercase">
+                    Khusus Halaman Gambar: Landscape A4 (297 × 210 mm)
+                  </span>
+                </div>
                 <span className="text-xs font-bold text-slate-600">
                   Petugas Survei: {petugasSurvei || '-'} • Lokasi: {tagingLokasi}
                 </span>

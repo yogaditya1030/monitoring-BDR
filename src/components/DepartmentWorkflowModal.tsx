@@ -1331,16 +1331,8 @@ export const DepartmentWorkflowModal: React.FC<DepartmentWorkflowModalProps> = (
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => handleApplyAction(false)}
-              className="px-4 sm:px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs shadow-md flex items-center gap-1.5 sm:gap-2 transition cursor-pointer"
-            >
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
-              <span>Simpan Gambar, RAB &amp; Perubahan</span>
-            </button>
-            <button
-              type="button"
               onClick={() => handleApplyAction(true)}
-              className="px-3.5 sm:px-4 py-2 bg-sky-700 hover:bg-sky-800 text-white font-bold rounded-lg text-xs shadow-md flex items-center gap-1.5 transition cursor-pointer"
+              className="px-4 sm:px-5 py-2 bg-sky-700 hover:bg-sky-800 text-white font-bold rounded-lg text-xs shadow-md flex items-center gap-1.5 transition cursor-pointer"
             >
               <span>Simpan &amp; Tutup</span>
               <ArrowRight className="w-4 h-4 shrink-0" />

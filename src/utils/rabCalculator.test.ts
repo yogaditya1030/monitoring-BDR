@@ -29,6 +29,7 @@ import {
   inferNetworkCategoryFromConductor,
   getActiveLegendItems,
   formatDateDdMmYyyy,
+  buildOfficialPlnLogoSvg,
 } from './rabCalculator';
 import {
   PRESET_SMPN3_PABELAN_NODES,
@@ -1039,4 +1040,165 @@ test('JTR 1-Phase (2x70 / 2x35) always renders 3 slashes (///) even if stale pha
   assert.equal(formatDateDdMmYyyy('2026-11-10'), '10-11-2026');
   assert.equal(formatDateDdMmYyyy('05-11-2026'), '05-11-2026');
 });
+
+test('computeEtiketCalloutLayout dynamically sizes callout width to text content and avoids overlapping horizontal spans or nearby poles', () => {
+  const layout = computeEtiketCalloutLayout({
+    nodes: [
+      {
+        id: 'n1',
+        kodeTiang: 'SA4-20/1',
+        kind: 'TIANG_RENCANA',
+        x: 340,
+        y: 245,
+        lines: ['1 C14-350', '1 SE1-2'],
+      },
+      {
+        id: 'n2',
+        kodeTiang: 'SA4-20/2',
+        kind: 'TIANG_RENCANA',
+        x: 450,
+        y: 238,
+        lines: ['1 C14-350'],
+      },
+      {
+        id: 'n3',
+        kodeTiang: 'GD-04',
+        kind: 'GARDU_RENCANA',
+        x: 454,
+        y: 222,
+        lines: [],
+      },
+      {
+        id: 'n4',
+        kodeTiang: 'SA4-20/3',
+        kind: 'TIANG_RENCANA',
+        x: 560,
+        y: 230,
+        lines: [],
+      },
+    ],
+    spans: [
+      {
+        id: 'sp1',
+        x1: 340,
+        y1: 245,
+        x2: 450,
+        y2: 238,
+        badgeText: '50m',
+        badgeW: 32,
+        badgeH: 15,
+      },
+      {
+        id: 'sp2',
+        x1: 450,
+        y1: 238,
+        x2: 560,
+        y2: 230,
+        badgeText: '52m',
+        badgeW: 32,
+        badgeH: 15,
+      },
+    ],
+    defaultMainRoadCenter: { x: 460, y: 274 },
+    defaultSimpangRoadCenter: { x: 185, y: 420 },
+    showRoadSketch: false,
+    legendRect: { x: 26, y: 26, w: 222, h: 149 },
+  });
+
+  // 1. Verify dynamic boxWidth fits character count (much narrower than old fixed 124px)
+  const gdPlacement = layout.nodePlacements.find((p) => p.id === 'n3')!;
+  const sa1Placement = layout.nodePlacements.find((p) => p.id === 'n1')!;
+  assert.ok(gdPlacement.boxWidth <= 55, `Expected compact width for GD-04, got ${gdPlacement.boxWidth}`);
+  assert.ok(sa1Placement.boxWidth <= 70, `Expected compact width for SA4-20/1, got ${sa1Placement.boxWidth}`);
+  assert.equal(gdPlacement.boxHeight, 16, 'Empty lines node should have compact 16px height');
+
+  // 2. Verify zero overlap among all placed callout boxes
+  for (let i = 0; i < layout.nodePlacements.length; i++) {
+    for (let j = i + 1; j < layout.nodePlacements.length; j++) {
+      const a = layout.nodePlacements[i];
+      const b = layout.nodePlacements[j];
+      const overlap = rectsOverlap(
+        { x: a.boxX, y: a.boxY, w: a.boxWidth, h: a.boxHeight },
+        { x: b.boxX, y: b.boxY, w: b.boxWidth, h: b.boxHeight },
+        2
+      );
+      assert.equal(overlap, false, `Callout ${a.id} and ${b.id} must not overlap`);
+    }
+  }
+});
+
+test('CC10 expands to the exact 13 official STANDAR KONSTRUKSI items and normalizeRabPackageItems upgrades stale 7-item CC10 packages', () => {
+  const rabRows = generateRabItemsFromSurvey({
+    nodes: [
+      {
+        id: 'n1',
+        kodeTiang: 'SA4-20/10',
+        kind: 'TIANG_RENCANA',
+        lat: -7.606889,
+        lng: 110.216104,
+        constructions: [{ code: 'CC10', qty: 1, actionType: 'PASANG' }],
+      },
+    ],
+    spans: [],
+    includePembetonanTiang: false,
+    transportasiRit: 0,
+  });
+  // 1 package header + 13 child items = 14 rows
+  assert.equal(rabRows.length, 14, 'Expected 1 header + 13 child items for CC10');
+  const childRows = rabRows.filter((r) => !r.isPackageHeader);
+  assert.equal(childRows.length, 13);
+  assert.equal(childRows[0].uraian, 'Isolator Tumpu ( Pin Post ) 20 KV');
+  assert.equal(childRows[0].volume, 3);
+  assert.equal(childRows[1].uraian, 'Bolt Single Up Side ⅝" x 8"');
+  assert.equal(childRows[5].uraian, 'Cross Arm Steel 3.000 mm ( UNSP 10 ) galvanis');
+  assert.equal(childRows[5].hargaSatuan, 598500);
+  assert.equal(childRows[10].uraian, 'Tie Wire # 4 / Alluminium bonding wire # 20');
+  assert.equal(childRows[10].volume, 6.2);
+  assert.equal(childRows[12].uraian, 'Upah Pasang Konst. JTM 3 Fasa C10');
+  assert.equal(childRows[12].hargaSatuan, 101900);
+
+  // Simulate an old 7-item cached CC10 package in localStorage and verify normalizeRabPackageItems upgrades it to 13 items
+  const staleRab = [rabRows[0], ...childRows.slice(0, 7)];
+  const upgraded = normalizeRabPackageItems(staleRab);
+  const upgradedChildren = upgraded.filter((r) => !r.isPackageHeader);
+  assert.equal(upgradedChildren.length, 13, 'Stale 7-item CC10 package should be upgraded to 13 official items');
+  assert.equal(upgradedChildren[12].uraian, 'Upah Pasang Konst. JTM 3 Fasa C10');
+});
+
+test('Distinct cable thicknesses (JTM > JTR > SR), angle-aligned phase slashes, interactive Skur grip, and official PLN logo SVG', () => {
+  const jtm = getCableVisualStyle('JTM', 'RENCANA', 'AAAC 150', 3);
+  const jtr = getCableVisualStyle('JTR', 'RENCANA', 'NFA2X-T 3x70+1x70', 3);
+  const sr = getCableVisualStyle('SR', 'RENCANA', 'NFA2X 2x16', 1);
+
+  assert.ok(jtm.weight > jtr.weight, `Expected JTM weight (${jtm.weight}) > JTR weight (${jtr.weight})`);
+  assert.ok(jtr.weight > sr.weight, `Expected JTR weight (${jtr.weight}) > SR weight (${sr.weight})`);
+
+  const rotatedSlashSvg = buildPhaseSlashSvg(3, '#dc2626', -42, 'JTR', 'NFA2X-T 3x70+1x70');
+  assert.ok(
+    rotatedSlashSvg.includes('transform="rotate(-42)"'),
+    'buildPhaseSlashSvg must embed transform="rotate(-42)" inside SVG so phase ticks align with cable angle'
+  );
+
+  const skurNodeSvg = buildNodeMarkerSvg(
+    {
+      id: 'n-skur',
+      kodeTiang: 'SA4-20/1',
+      kind: 'TIANG_RENCANA',
+      lat: -7.6,
+      lng: 110.2,
+      constructions: [{ code: 'SE1-2', qty: 1 }],
+    },
+    false
+  );
+  assert.ok(
+    skurNodeSvg.includes('class="pln-schoor-arrow-grip"'),
+    'buildNodeMarkerSvg must wrap Skur arrow in .pln-schoor-arrow-grip for direct rotation without moving the pole'
+  );
+
+  const plnLogo = buildOfficialPlnLogoSvg(36, 44);
+  assert.ok(plnLogo.includes('#FFF200'), 'PLN logo must include yellow background (#FFF200)');
+  assert.ok(plnLogo.includes('#00AEEF'), 'PLN logo must include 3 cyan/blue waves (#00AEEF)');
+  assert.ok(plnLogo.includes('#ED1C24'), 'PLN logo must include red lightning bolt (#ED1C24)');
+});
+
 
